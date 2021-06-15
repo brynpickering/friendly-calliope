@@ -1,6 +1,3 @@
-from glob import glob
-
-
 import glob
 import os
 import yaml

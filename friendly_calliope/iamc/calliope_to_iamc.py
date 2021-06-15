@@ -1,5 +1,5 @@
-from ..consolidate_calliope_output import EU28
-from ..io import dict_to_csvs
+from friendly_calliope.consolidate_calliope_output import EU28
+from friendly_calliope.io import dict_to_csvs
 
 IAMC_GROUP_MAPPING = {
     "nameplate_capacity": "Installed capacity",

@@ -6,7 +6,7 @@ import xarray as xr
 
 from calliope.core.util.dataset import split_loc_techs
 
-from io import get_models_from_file, dict_to_csvs
+from friendly_calliope.io import get_models_from_file, dict_to_csvs
 
 EU28 = [
     "AUT", "BEL", "BGR", "HRV", "CYP", "CZE", "DNK", "EST", "FIN", "FRA", "DEU",

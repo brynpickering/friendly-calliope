@@ -2,7 +2,6 @@ import glob
 import os
 import yaml
 
-import pandas as pd
 import calliope
 
 
@@ -27,14 +26,13 @@ def dict_to_csvs(data_dict, outdir, meta, name_mapping=None, iamc_mapping=None):
     """
     index = []
     for subdir, data in data_dict.items():
-        data_to_save = pd.concat(data.values(), keys=data.keys(), names=["techs"])
         os.makedirs(os.path.join(outdir, "data"), exist_ok=True)
         outfile = os.path.join(outdir, "data", subdir + ".csv")
-        data_to_save.to_frame(subdir).dropna().to_csv(outfile)
+        data.to_frame(subdir).dropna().to_csv(outfile)
         index_meta = {
             "path": os.path.join("data", subdir + ".csv"),
             "alias": {"locs": "region", "techs": "technology"},
-            "idxcols": list(data_to_save.index.names),
+            "idxcols": list(data.index.names),
             "name": name_mapping[subdir] if name_mapping is not None else subdir
         }
         if iamc_mapping is not None:

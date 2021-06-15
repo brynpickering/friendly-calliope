@@ -1,3 +1,5 @@
+import pandas as pd
+
 from friendly_calliope.consolidate_calliope_output import EU28
 from friendly_calliope.io import dict_to_csvs
 
@@ -130,6 +132,10 @@ def iamc_dict_to_csvs(data_dict, outdir):
         "description": "Calliope output dataset for IAMC conversion",
         "keywords": ["calliope", "iamc", "free-model-runs"],
         "license": "CC-BY-4.0"
+    }
+    data_dict = {
+        indicator: pd.concat(data.values(), keys=data.keys(), names=["techs"])
+        for indicator, data in data_dict.items()
     }
     dict_to_csvs(
         data_dict,

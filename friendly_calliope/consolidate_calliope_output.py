@@ -13,7 +13,7 @@ EU28 = [
     "GRC", "HUN", "IRL", "ITA", "LVA", "LTU", "LUX", "NLD", "POL", "PRT", "ROU",
     "SVK", "SVN", "ESP", "SWE", "GBR"
 ]
-ZERO_THRESHOLD = 1e-6  # capacities lower than this will be considered as effectively zero
+ZERO_THRESHOLD = 5e-6  # capacities lower than this will be considered as effectively zero
 COST_NAME_MAPPING = {
     'cost_energy_cap': "cost_per_nameplate_capacity",
     'cost_om_prod': "cost_per_flow_out",
@@ -27,49 +27,77 @@ COST_NAME_MAPPING = {
     'cost_var': 'total_operation_cost',
 }
 
+EMISSIONS_NAME_MAPPING = {
+    'cost_energy_cap': "emissions_per_nameplate_capacity",
+    'cost_om_prod': "emissions_per_flow_out",
+    'cost_om_annual_investment_fraction': "annual_emissions_per_unit_invested",
+    'cost_storage_cap': "emissions_per_storage_capacity",
+    'cost_om_annual': "annual_emissions_per_nameplate_capacity",
+    'cost_depreciation_rate': "depreciation_rate",
+    'cost_om_con': "emissions_per_flow_in",
+    'cost': 'total_system_emissions',
+    'cost_investment': 'total_investment_emissions',
+    'cost_var': 'total_operation_emissions',
+}
+
 NEW_TECH_NAMES = {
-    "eu_import": "Transmission between countries inside and outside the EU",
-    "external_transmission": "Transmission between and within countries outside the EU",
+    "import": "Transmission between countries inside and outside the region of interest",
+    "external_transmission": "Transmission between and within countries outside the region of interest",
     "heat_storage_big": "District-scale heat storage vessels",
     "heat_storage_small": "Building-scale heat storage vessels",
-    "internal_eu_transmission": "Transmission between and within countries inside the EU",
+    "internal_transmission": "Transmission between and within countries inside the region of interest",
     "wind_onshore": "Onshore wind",
 }
 
-TRANSMISSION_NAMES = ["eu_import", "external_transmission", "internal_eu_transmission"]
+TRANSMISSION_NAMES = ["import", "external_transmission", "internal_transmission"]
 
 
-def combine_scenarios_to_one_dict(model_dict, cost_optimal_model=None, new_dimension_name="scenario"):
+def combine_scenarios_to_one_dict(
+    model_dict, cost_optimal_model=None, new_dimension_name="scenario", **kwargs
+):
     """
     Take in a dictionary of Calliope models and create a dictionary of processed data ready to share with the world
     """
     all_data_dict = {}
     if cost_optimal_model is None:
         cost_optimal_model = list(model_dict.values())[0]
-
-    names = cost_optimal_model.inputs.names.to_series()
-    all_data_dict.update(get_input_costs(cost_optimal_model.inputs))
     if isinstance(new_dimension_name, str):
         new_dimension_name = [new_dimension_name]
 
+    names = cost_optimal_model.inputs.names.to_series()
+    kwargs["timestep_resolution"] = cost_optimal_model.inputs.timestep_resolution
+
+    all_data_dict.update(get_input_costs(cost_optimal_model.inputs, **kwargs))
     output_costs = pd.concat(
-        [get_output_costs(model) for model in model_dict.values()],
+        [get_output_costs(model, **kwargs) for model in model_dict.values()],
         keys=model_dict.keys(), names=new_dimension_name
     )
+    if "co2" in cost_optimal_model._model_data.costs.values:
+        co2_kwargs = {"cost_class": "co2", "unit": "10ktCO2", "mapping": EMISSIONS_NAME_MAPPING, **kwargs}
+        all_data_dict.update(get_input_costs(cost_optimal_model.inputs, **co2_kwargs))
+        _output_emissions = {}
+        for model_name, model in model_dict.items():
+            if "co2" in model._model_data.costs.values:
+                _output_emissions[model_name] = get_output_costs(model, **co2_kwargs)
+        output_emissions = pd.concat(
+            _output_emissions.values(), keys=_output_emissions.keys(), names=new_dimension_name
+        )
+        dataframe_to_dict_elements(output_emissions, all_data_dict)
+
     energy_caps = pd.concat(
-        [get_caps(model) for model in model_dict.values()],
+        [get_caps(model, **kwargs) for model in model_dict.values()],
         keys=model_dict.keys(), names=new_dimension_name,
     )
     energy_flows = pd.concat(
-        [get_flows(model, None) for model in model_dict.values()],
+        [get_flows(model, None, **kwargs) for model in model_dict.values()],
         keys=model_dict.keys(), names=new_dimension_name,
     )
     energy_flows_sum = strip_small_techs(energy_caps, pd.concat(
-        [get_flows(model, "sum") for model in model_dict.values()],
+        [get_flows(model, "sum", **kwargs) for model in model_dict.values()],
         keys=model_dict.keys(), names=new_dimension_name,
     ))
     energy_flows_max = strip_small_techs(energy_caps, pd.concat(
-        [get_flows(model, "max") for model in model_dict.values()],
+        [get_flows(model, "max", **kwargs) for model in model_dict.values()],
         keys=model_dict.keys(), names=new_dimension_name,
     ))
     energy_caps = add_units_to_caps(energy_caps, energy_flows_max, cost_optimal_model)
@@ -90,11 +118,11 @@ def dataframe_to_dict_elements(df, data_dict):
     data_dict.update({col_name: df.loc[:, col_name] for col_name in df.columns})
 
 
-def get_caps(model):
+def get_caps(model, **kwargs):
     """Get storage and energy capacity"""
     caps = []
     for cap_type in ["energy", "storage"]:
-        mapped_da = map_da(model._model_data[f"{cap_type}_cap"], keep_demand=False)
+        mapped_da = map_da(model._model_data[f"{cap_type}_cap"], keep_demand=False, **kwargs)
         series = clean_series(mapped_da, zero_threshold=ZERO_THRESHOLD, halve_transmission=True)
         if series is None:
             continue
@@ -108,10 +136,10 @@ def get_caps(model):
     return pd.concat(caps, axis=1)
 
 
-def get_a_flow(model, flow_direction, timeseries_agg):
+def get_a_flow(model, flow_direction, timeseries_agg, **kwargs):
     direction = "out" if flow_direction == "prod" else "in"
     mapped_da = map_da(
-        model._model_data[f"carrier_{flow_direction}"], timeseries_agg=timeseries_agg
+        model._model_data[f"carrier_{flow_direction}"], timeseries_agg=timeseries_agg, **kwargs
     )
     name = f"flow_{direction}_{timeseries_agg}" if timeseries_agg is not None else f"flow_{direction}"
     return (
@@ -124,9 +152,9 @@ def get_a_flow(model, flow_direction, timeseries_agg):
     )
 
 
-def get_flows(model, timeseries_agg):
-    prod = get_a_flow(model, "prod", timeseries_agg)
-    con = get_a_flow(model, "con", timeseries_agg)
+def get_flows(model, timeseries_agg, **kwargs):
+    prod = get_a_flow(model, "prod", timeseries_agg, **kwargs)
+    con = get_a_flow(model, "con", timeseries_agg, **kwargs)
 
     prod.loc[prod.techs.str.find('transport_') > -1, 'unit'] = 'billion_km'
     con.loc[con.techs.isin(['demand_heavy_transport', 'demand_light_transport']), 'unit'] = 'billion_km'
@@ -144,11 +172,11 @@ def get_flows(model, timeseries_agg):
     return flow
 
 
-def map_da(da, keep_demand=True, timeseries_agg="sum", loc_tech_agg="sum"):
+def map_da(da, keep_demand=True, timeseries_agg="sum", loc_tech_agg="sum", **kwargs):
     loc_tech_dim = [i for i in da.dims if "loc_tech" in i][0]
-    mapped_da = get_cleaned_dim_mapping(da, loc_tech_dim, keep_demand, loc_tech_agg)
+    mapped_da = get_cleaned_dim_mapping(da, loc_tech_dim, keep_demand, loc_tech_agg, **kwargs)
     if "timesteps" in mapped_da.dims and timeseries_agg is not None:
-        return agg_da(mapped_da, timeseries_agg, "timesteps")
+        return agg_da(mapped_da, timeseries_agg, "timesteps", **kwargs)
     else:
         return mapped_da
 
@@ -214,7 +242,8 @@ def add_units_to_caps(energy_caps, energy_flows, cost_optimal_model):
             multicarrier_info
             .index
             .levels[0],
-            level='techs'
+            level='techs',
+            errors="ignore"
         )
         .dropna(subset=["flow_out_max"])
         .reset_index(["carriers", "unit"])
@@ -245,7 +274,13 @@ def add_units_to_caps(energy_caps, energy_flows, cost_optimal_model):
     secondary_carrier_caps = energy_caps_with_units.nameplate_capacity.align(
         energy_flows["flow_out_max"].dropna().droplevel("unit")
     )
-    energy_caps_with_units_and_secondary = secondary_carrier_caps[0].fillna(secondary_carrier_caps[1]).dropna()
+
+    energy_caps_with_units_and_secondary = (
+        secondary_carrier_caps[0]
+        .fillna(secondary_carrier_caps[1])
+        .dropna()
+        .rename({np.nan: "tw"}, level="unit")
+    )
 
     assert len(energy_caps_with_units_and_secondary) == len(energy_flows["flow_out_max"].dropna())
 
@@ -257,29 +292,29 @@ def add_units_to_caps(energy_caps, energy_flows, cost_optimal_model):
     return energy_caps_with_units
 
 
-def get_output_costs(model):
+def get_output_costs(model, cost_class="monetary", unit="billion_2015eur", mapping=COST_NAME_MAPPING, **kwargs):
     """
     Get costs associated with model results
     """
     costs = {}
     for _cost in ["cost", "cost_investment", "cost_var"]:
-        cost_da = model._model_data[_cost].loc[{"costs": "monetary"}]
-        mapped_da = map_da(cost_da, keep_demand=False)
+        cost_da = model._model_data[_cost].loc[{"costs": cost_class}]
+        mapped_da = map_da(cost_da, keep_demand=False, **kwargs)
 
         cost_series = clean_series(mapped_da)
         if cost_series is None:
             continue
         else:
-            costs[COST_NAME_MAPPING[_cost]] = (
+            costs[mapping[_cost]] = (
                 cost_series
-                .to_frame("billion_2015eur")
+                .to_frame(unit)
                 .rename_axis(columns="unit")
                 .stack()
             )
     return pd.concat(costs.values(), keys=costs.keys(), axis=1)
 
 
-def get_input_costs(inputs):
+def get_input_costs(inputs, cost_class="monetary", unit="billion_2015eur", mapping=COST_NAME_MAPPING, **kwargs):
     """
     Get costs used as model inputs
     """
@@ -289,24 +324,26 @@ def get_input_costs(inputs):
             continue
 
         if "cap" in var_name:
-            unit = "billion_2015eur_per_tw"
+            _unit = f"{unit}_per_tw"
         elif var_name == "cost_om_annual":
-            unit = "billion_2015eur_per_tw_per_year"
+            _unit = f"{unit}_per_tw_per_year"
         elif var_name == "cost_om_annual_investment_fraction":
-            unit = "fraction_of_total_investment"
+            _unit = "fraction_of_total_investment"
         elif var_name == "cost_depreciation_rate":
-            unit = "fraction"
+            _unit = "fraction"
         elif "om_" in var_name:
-            unit = "billion_2015eur_per_twh"
-        _name = COST_NAME_MAPPING[var_name]
-        mapped_da = map_da(var_data.loc[{"costs": "monetary"}], loc_tech_agg="mean")
-        costs[_name] = (
-            clean_series(mapped_da)
-            .to_frame(unit)
-            .rename_axis(columns="unit")
-            .stack()
-        )
-        costs[_name].loc[costs[_name].index.get_level_values("unit").str.find("2015_eur") > -1] *= 10
+            _unit = f"{unit}_per_twh"
+        _name = mapping[var_name]
+        mapped_da = map_da(var_data.loc[{"costs": cost_class}], loc_tech_agg="mean", **kwargs)
+        series = clean_series(mapped_da)
+        if series is not None:
+            costs[_name] = (
+                series
+                .to_frame(_unit)
+                .rename_axis(columns="unit")
+                .stack()
+            )
+            costs[_name].loc[costs[_name].index.get_level_values("unit").str.find("per_tw") > -1] *= 10
 
     return costs
 
@@ -327,24 +364,47 @@ def strip_small_techs(energy_caps, energy_flows):
     )
 
 
-def get_eu_imports(loc_tech_mapping):
+def get_imports(loc_tech_mapping, group=EU28, groupname="eu", region_group="countries"):
     """
-    Separate transmission links into those which are and are not inside the EU28
+    Separate transmission links into those which are and are not inside a given
+    set of regions. These regions default to the EU28 (i.e. including the UK)
+
+    Parameters
+    ----------
+    import_group : array of strings, default = all countries of the EU28
+        List of regions (post-grouping based on `region_group`) to consider as the
+        'region of interest' for imports/exports across the border
+    import_groupname : string, default = 'eu'
+        Name of the 'region of interest'
+    region_group : string or mapping, default = "countries"
+        If "countries", group locations to a country level, otherwise group based on
+        a mapping from model locations to group names. Mapping allows e.g. one country to
+        remain as sub-country regions, while all others are grouped to countries or 'rest'
     """
     is_transmission = loc_tech_mapping[1].str.find(":") > -1
     if len(loc_tech_mapping[is_transmission]) == 0:
         return loc_tech_mapping
-    in_eu = loc_tech_mapping[0].isin(EU28)
-    remote_in_eu = loc_tech_mapping[1].str.split(":", expand=True)[1].str.split("_", expand=True)[0].isin(EU28)
-    loc_tech_mapping.loc[is_transmission & in_eu & ~remote_in_eu, 1] = "eu_import"
-    loc_tech_mapping.loc[is_transmission & ~in_eu & remote_in_eu, 1] = "eu_import"
-    loc_tech_mapping.loc[is_transmission & ~in_eu & ~remote_in_eu, 1] = "external_transmission"
-    loc_tech_mapping.loc[is_transmission & in_eu & remote_in_eu, 1] = "internal_eu_transmission"
+    _in = loc_tech_mapping[0].isin(group)
+    _remote_in = rename_locations(loc_tech_mapping[1].str.split(":", expand=True)[1], region_group).isin(group)
+    loc_tech_mapping.loc[is_transmission & _in & ~_remote_in, 1] = "import"
+    loc_tech_mapping.loc[is_transmission & ~_in & _remote_in, 1] = "import"
+    loc_tech_mapping.loc[is_transmission & ~_in & ~_remote_in, 1] = "external_transmission"
+    loc_tech_mapping.loc[is_transmission & _in & _remote_in, 1] = "internal_transmission"
     assert len(loc_tech_mapping[loc_tech_mapping[1].str.find(":") > -1]) == 0
     return loc_tech_mapping
 
 
-def get_cleaned_dim_mapping(da, dim, keep_demand=True, dim_agg="sum"):
+def rename_locations(locations, region_group):
+    if region_group == "countries":
+        return locations.str.split("_", expand=True)[0]
+    else:
+        return locations.replace(region_group)
+
+
+def get_cleaned_dim_mapping(
+    da, dim, keep_demand=True, dim_agg="sum", import_group=EU28, import_groupname="eu",
+    region_group="countries", **kwargs
+):
     """
     Go from a concatenated location::technology(::carrier) list into an unconcatenated
     list, including summing up sub-national regions to the national level and technologies
@@ -360,10 +420,19 @@ def get_cleaned_dim_mapping(da, dim, keep_demand=True, dim_agg="sum"):
     dim_agg : string, default = "sum"
         How to group the unconcatenated and cleaned up data.
         Any xarray groupby method can be passed.
+    import_group : array of strings, default = all countries of the EU28
+        List of regions (post-grouping based on `region_group`) to consider as the
+        'region of interest' for imports/exports across the border
+    import_groupname : string, default = 'eu'
+        Name of the 'region of interest'
+    region_group : string or mapping, default = "countries"
+        If "countries", group locations to a country level, otherwise group based on
+        a mapping from model locations to group names. Mapping allows e.g. one country to
+        remain as sub-country regions, while all others are grouped to countries or 'rest'
     """
     split_dim = da[dim].to_series().str.split("::", expand=True)
-    split_dim[0] = split_dim[0].str.split("_", expand=True)[0]
-    split_dim = get_eu_imports(split_dim)
+    split_dim[0] = rename_locations(split_dim[0], region_group)
+    split_dim = get_imports(split_dim, import_group, import_groupname, region_group)
     split_dim = split_dim.loc[split_dim[1].str.find("tech_heat") == -1]
     if keep_demand is False:
         split_dim = split_dim.loc[split_dim[1].str.find("demand") == -1]
@@ -392,25 +461,39 @@ def get_cleaned_dim_mapping(da, dim, keep_demand=True, dim_agg="sum"):
     return new_da
 
 
-def agg_da(da, agg_method, agg_dim=None):
+def agg_da(da, agg_method, agg_dim=None, **kwargs):
     """
     Aggregate `agg_dim` dimension of an xarray DataArray `da`,
     including setting 'min_count=1' if `agg_method` is "sum"
     """
-    kwargs = {"keep_attrs": True}
+    if agg_dim == "timesteps" and "timestep_resolution" in kwargs.keys() and agg_method != "sum":
+        da = da / kwargs["timestep_resolution"]
+    agg_kwargs = {"keep_attrs": True}
     if agg_method == "sum":
-        kwargs.update({"min_count": 1})
-    return getattr(da, agg_method)(agg_dim, **kwargs)
+        agg_kwargs.update({"min_count": 1})
+    return getattr(da, agg_method)(agg_dim, **agg_kwargs)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("indir", help="Directory containing all scenario files")
     parser.add_argument("outdir", help="Filepath to dump friendly data")
+    parser.add_argument(
+        "--import_group", default=EU28,
+        help="list of regions defining a `region of interest` to track imports/exports"
+    )
+    parser.add_argument(
+        "--import_groupname", default="eu",
+        help="Name for 'region of interest' for grouping imports/exports"
+    )
     args = parser.parse_args()
 
     model_dict, cost_optimal_model = get_models_from_file(args.indir)
-    data_dict = combine_scenarios_to_one_dict(model_dict, cost_optimal_model)
+    kwargs = {
+        k: getattr(args, k) for k in ["import_group", "import_groupname"]
+        if getattr(args, k) is not None
+    }
+    data_dict = combine_scenarios_to_one_dict(model_dict, cost_optimal_model, **kwargs)
     meta = {
         "name": "calliope-sentinel-data",
         "description": "Calliope output dataset",

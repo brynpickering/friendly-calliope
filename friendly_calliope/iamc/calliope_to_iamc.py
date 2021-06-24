@@ -35,7 +35,7 @@ IAMC_MAPPING_GEN = {
     "Flexibility|Electricity Storage": {"techs": ["battery", "pumped_hydro"], "carriers": "electricity"},
     "Flexibility|Heat Storage": {"techs": ["heat_storage_big", "heat_storage_small"], "carriers": "heat"},
     "Flexibility|Hydrogen Storage": {"techs": "hydrogen_storage", "carriers": "hydrogen"},
-    "Flexibility|Interconnect Importing Capacity": {"techs": "eu_import", "carriers": "electricity"},
+    "Flexibility|Interconnect Importing Capacity": {"techs": "import", "carriers": "electricity"},
     "Heat|Electricity|Heat Pumps": {"techs": "hp", "carriers": "heat"},
     "Heat|Electricity|Others": {"techs": ["electric_heater", "electric_hob"], "carriers": "heat"},
     "Hydrogen|Electricity": {"techs": "electrolysis", "carriers": "hydrogen"},

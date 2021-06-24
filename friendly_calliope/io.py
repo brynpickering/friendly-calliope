@@ -19,13 +19,19 @@ def get_models_from_file(indir):
     return models, cost_optimal_model
 
 
-def dict_to_csvs(data_dict, outdir, meta, name_mapping=None, iamc_mapping=None):
+def dict_to_csvs(
+    data_dict, outdir, meta,
+    name_mapping=None, iamc_mapping=None,
+    include_timeseries_data=False
+):
     """
     Emulates possible friendly_data functionality by saving our dicts of pandas Series
     to file, including relevant metadata and
     """
     index = []
     for subdir, data in data_dict.items():
+        if include_timeseries_data is False and "timesteps" in data.index.names:
+            continue
         os.makedirs(os.path.join(outdir, "data"), exist_ok=True)
         outfile = os.path.join(outdir, "data", subdir + ".csv")
         data.to_frame(subdir).dropna().to_csv(outfile)

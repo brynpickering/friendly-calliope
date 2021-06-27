@@ -1,6 +1,15 @@
 #!/usr/bin/env python3
 
+from pathlib import Path
+
 from setuptools import setup, find_packages
+
+requirements = list(
+    filter(
+        lambda i: "git://" not in i,
+        Path("requirements.txt").read_text().strip().split("\n"),
+    )
+)
 
 setup(
     name='friendly-calliope',
@@ -10,13 +19,7 @@ setup(
     maintainer_email='bryn.pickering@usys.ethz.ch',
     packages=find_packages(exclude=['tests*']),
     include_package_data=True,
-    install_requires=[
-        "numpy",
-        "calliope>=0.6.6",
-        "pandas",
-        "xarray>=0.18",
-        "pyyaml"
-    ],
+    install_requires=requirements,
     classifiers=[
         'Environment :: Console',
         'Intended Audience :: Science/Research',

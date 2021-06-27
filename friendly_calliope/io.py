@@ -1,8 +1,11 @@
 import glob
 import os
-import yaml
+from copy import deepcopy
 
 import calliope
+
+from friendly_data.converters import from_df
+from friendly_data.dpkg import create_pkg, write_pkg
 
 
 def get_models_from_file(indir):
@@ -19,7 +22,7 @@ def get_models_from_file(indir):
     return models, cost_optimal_model
 
 
-def dict_to_csvs(
+def write_dpkg(
     data_dict, outdir, meta,
     name_mapping=None, iamc_mapping=None,
     include_timeseries_data=False
@@ -28,24 +31,30 @@ def dict_to_csvs(
     Emulates possible friendly_data functionality by saving our dicts of pandas Series
     to file, including relevant metadata and
     """
-    index = []
-    for subdir, data in data_dict.items():
+    alias = {"locs": "region", "techs": "technology"}
+    resources = []
+    idx = []
+    for name, data in data_dict.items():
         if include_timeseries_data is False and "timesteps" in data.index.names:
             continue
-        os.makedirs(os.path.join(outdir, "data"), exist_ok=True)
-        outfile = os.path.join(outdir, "data", subdir + ".csv")
-        data.to_frame(subdir).dropna().to_csv(outfile)
+        data = data.to_frame(name).dropna()
+        resource = from_df(
+            data,
+            outdir,
+            os.path.join("data", name + ".csv"),
+            alias=alias,
+        )
+        resources.append(resource)
         index_meta = {
-            "path": os.path.join("data", subdir + ".csv"),
-            "alias": {"locs": "region", "techs": "technology"},
-            "idxcols": list(data.index.names),
-            "name": name_mapping[subdir] if name_mapping is not None else subdir
+            "path": resource["path"],
+            "alias": deepcopy(alias),
+            "idxcols": resource["schema"]["primaryKey"],
+            "name": name_mapping[name] if name_mapping is not None else name,
+            "iamc": "Foo|Bar|{technology}"
         }
         if iamc_mapping is not None:
-            index_meta["iamc"] = iamc_mapping.format(name_mapping[subdir])
-        index.append(index_meta)
+            index_meta["iamc"] = iamc_mapping.format(name_mapping[name])
+        idx.append(index_meta)
 
-    with open(os.path.join(outdir, "conf.yaml"), "w") as f:
-        yaml.safe_dump(meta, f)
-    with open(os.path.join(outdir, "index.yaml"), "w") as f:
-        yaml.safe_dump(index, f)
+    package = create_pkg(meta, resources, basepath=outdir, infer=False)
+    write_pkg(package, outdir, idx=idx)

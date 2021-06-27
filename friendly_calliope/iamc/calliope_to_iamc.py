@@ -1,7 +1,7 @@
 import pandas as pd
 
 from friendly_calliope.consolidate_calliope_output import EU28
-from friendly_calliope.io import dict_to_csvs
+from friendly_calliope.io import write_dpkg
 
 IAMC_GROUP_MAPPING = {
     "nameplate_capacity": "Installed capacity",
@@ -10,12 +10,13 @@ IAMC_GROUP_MAPPING = {
     "flow_in_50": "Hourly power consumption|Percentile 50",
     "flow_in_summer_peak": "Hourly power consumption|Summer Peak",
     "flow_in_winter_peak": "Hourly power consumption|Winter Peak",
-    "flow_in_sum": "Hourly power consumption|Yearly",
+    "flow_in_sum": "Energy consumption",
     "flow_out_25": "Generation|Percentile 25",
     "flow_out_50": "Generation|Percentile 50",
     "flow_out_summer_peak": "Generation|Summer Peak",
     "flow_out_winter_peak": "Generation|Winter Peak",
     "flow_out_sum": "Generation|Yearly",
+    "total_system_emissions": "Emissions|Kyoto gases|Fossil CO2",
 }
 
 IAMC_MAPPING_GEN = {
@@ -34,7 +35,7 @@ IAMC_MAPPING_GEN = {
     "Heat|Solid bio and waste|Waste": {"techs": "chp_wte_back_pressure", "carriers": "heat"},
     "Flexibility|Electricity Storage": {"techs": ["battery", "pumped_hydro"], "carriers": "electricity"},
     "Flexibility|Heat Storage": {"techs": ["heat_storage_big", "heat_storage_small"], "carriers": "heat"},
-    "Flexibility|Hydrogen Storage": {"techs": "hydrogen_storage", "carriers": "hydrogen"},
+    #"Flexibility|Hydrogen Storage": {"techs": "hydrogen_storage", "carriers": "hydrogen"},
     "Flexibility|Interconnect Importing Capacity": {"techs": "import", "carriers": "electricity"},
     "Heat|Electricity|Heat Pumps": {"techs": "hp", "carriers": "heat"},
     "Heat|Electricity|Others": {"techs": ["electric_heater", "electric_hob"], "carriers": "heat"},
@@ -45,7 +46,16 @@ IAMC_MAPPING_GEN = {
 
 IAMC_MAPPING_CON = {
     "Electricity|Heating": {"techs": ["electric_heater", "hp", "electric_hob"], "carriers": "electricity"},
-    "Electricity|Road": {"techs": ["light_transport_ev", "heavy_transport_ev"], "carriers": "electricity"}
+    "Electricity|Road": {"techs": ["light_transport_ev", "heavy_transport_ev"], "carriers": "electricity"},
+    "Diesel|Road": {"techs": ["light_transport_ice", "heavy_transport_ice"], "carriers": "diesel"},
+}
+
+IAMC_MAPPING_FOSSILS = {
+    "Liquids|Fossil|Diesel": {"techs": "diesel_supply"},
+    "Transportation|Aviation|Liquids|Fossil|Kerosene": {"techs": "kerosene_supply"},
+    "Fossil|Gas|Natural gas": {"techs": "methane_supply"},
+    "Heavy industries|Chemicals and petrochemicals|Fossil|Methanol": {"techs": "methanol_supply"},
+    "Electricity|Fossil|Coal": {"techs": "coal_power_plant"},
 }
 
 
@@ -55,6 +65,7 @@ def prep_data_groups(in_data_dict):
     add_capacity_investment(in_data_dict, out_data_dict)
     add_generation(in_data_dict, out_data_dict)
     add_consumption(in_data_dict, out_data_dict)
+    add_fossils(in_data_dict, out_data_dict)
 
     return out_data_dict
 
@@ -95,16 +106,41 @@ def add_consumption(in_data_dict, out_data_dict):
             )
 
 
+def add_fossils(in_data_dict, out_data_dict):
+    for iamc_group, grouping in IAMC_MAPPING_FOSSILS.items():
+        out_data_dict["total_system_emissions"][iamc_group] = slice_series(
+            in_data_dict["total_system_emissions"],
+            locs=EU28, **grouping
+        )
+        if iamc_group != "Coal":
+            out_data_dict["flow_in_sum"][iamc_group] =  get_flow_agg(
+                slice_series(
+                    in_data_dict["flow_out"],
+                    locs=EU28, **grouping
+                ),
+                "flow_out_sum"
+            )
+        else:
+            out_data_dict["flow_in_sum"][iamc_group] =  get_flow_agg(
+                slice_series(
+                    in_data_dict["flow_out"],
+                    locs=EU28, **grouping
+                ),
+                "flow_out_sum"
+            ) / 0.4  # efficiency of coal plant
+
+
 def get_flow_agg(flow, agg):
     flow = flow.unstack("timesteps")
+    resolution = int(round((8760 / len(flow.columns)), 0))
     if agg.endswith("25"):
-        flow = flow.quantile(0.25, axis=1)
+        flow = flow.div(resolution).quantile(0.25, axis=1)
     elif agg.endswith("50"):
-        flow = flow.quantile(0.50, axis=1)
+        flow = flow.div(resolution).quantile(0.50, axis=1)
     elif agg.endswith("winter_peak"):
-        flow = flow.loc[:, flow.columns.month.isin([12, 1, 2])].max(axis=1)
+        flow = flow.div(resolution).loc[:, flow.columns.month.isin([12, 1, 2])].max(axis=1)
     elif agg.endswith("summer_peak"):
-        flow = flow.loc[:, flow.columns.month.isin([6, 7, 8])].max(axis=1)
+        flow = flow.div(resolution).loc[:, flow.columns.month.isin([6, 7, 8])].max(axis=1)
     elif agg.endswith("sum"):
         flow = flow.sum(axis=1, min_count=1)
     return flow
@@ -126,7 +162,7 @@ def slice_series(series, **kwargs):
     return series.sum(level=levels, min_count=1)
 
 
-def iamc_dict_to_csvs(data_dict, outdir):
+def write_dpkg_with_iamc(data_dict, outdir):
     meta = {
         "name": "calliope-sentinel-free-model-run",
         "description": "Calliope output dataset for IAMC conversion",
@@ -137,7 +173,7 @@ def iamc_dict_to_csvs(data_dict, outdir):
         indicator: pd.concat(data.values(), keys=data.keys(), names=["techs"])
         for indicator, data in data_dict.items()
     }
-    dict_to_csvs(
+    write_dpkg(
         data_dict,
         outdir,
         meta,

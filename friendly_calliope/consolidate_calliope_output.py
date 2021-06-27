@@ -6,7 +6,7 @@ import xarray as xr
 
 from calliope.core.util.dataset import split_loc_techs
 
-from friendly_calliope.io import get_models_from_file, dict_to_csvs
+from friendly_calliope.io import get_models_from_file, write_dpkg
 
 EU28 = [
     "AUT", "BEL", "BGR", "HRV", "CYP", "CZE", "DNK", "EST", "FIN", "FRA", "DEU",
@@ -73,7 +73,7 @@ def combine_scenarios_to_one_dict(
         keys=model_dict.keys(), names=new_dimension_name
     )
     if "co2" in cost_optimal_model._model_data.costs.values:
-        co2_kwargs = {"cost_class": "co2", "unit": "10ktCO2", "mapping": EMISSIONS_NAME_MAPPING, **kwargs}
+        co2_kwargs = {"cost_class": "co2", "unit": "MtCO2", "mapping": EMISSIONS_NAME_MAPPING, **kwargs}
         all_data_dict.update(get_input_costs(cost_optimal_model.inputs, **co2_kwargs))
         _output_emissions = {}
         for model_name, model in model_dict.items():
@@ -500,4 +500,4 @@ if __name__ == "__main__":
         "keywords": ["calliope"],
         "license": "CC-BY-4.0"
     }
-    dict_to_csvs(data_dict, args.outdir, meta)
+    write_dpkg(data_dict, args.outdir, meta)

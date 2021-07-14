@@ -4,12 +4,7 @@ from pathlib import Path
 
 from setuptools import setup, find_packages
 
-requirements = list(
-    filter(
-        lambda i: "git://" not in i,
-        Path("requirements.txt").read_text().strip().split("\n"),
-    )
-)
+requirements = Path("requirements.txt").read_text().strip().split("\n")
 
 setup(
     name='friendly-calliope',

@@ -208,7 +208,7 @@ def get_flows(model, timeseries_agg, **kwargs):
     return flow
 
 
-def get_transmission_flows(model, timeseries_agg, **kwargs):
+def get_transmission_flows(model, timeseries_agg, region_group="countries", **kwargs):
     kwargs["valid_loc_techs"] = None
     flows = get_flows(model, timeseries_agg, transmission_only=True, halve_transmission=False, **kwargs)
     _from = "exporting_region"
@@ -219,10 +219,11 @@ def get_transmission_flows(model, timeseries_agg, **kwargs):
         _flow = flows[flow_name(flow, timeseries_agg)]
         remote_loc = _to if flow == "con" else _from
         loc = _from if flow == "con" else _to
-        _flow.index = _flow.index.set_levels(
-            flow.index.levels[0].str.split(":", expand=True).levels[1], level="techs"
+        _flow = (
+            _flow
+            .rename(lambda x: rename_locations(pd.Series([x.split(":")[1]]), region_group).item(), level="techs")
+            .rename_axis(index={"techs": remote_loc, "locs": loc})
         )
-        _flow = _flow.rename_axis(index={"techs": remote_loc, "locs": loc})
         _flow_summed_across_all_transmission_techs = _flow.groupby(level=index_names).sum()
         summed_flows.append(_flow_summed_across_all_transmission_techs)
 

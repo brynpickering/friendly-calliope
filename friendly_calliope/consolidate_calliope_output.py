@@ -68,6 +68,13 @@ def combine_scenarios_to_one_dict(
     kwargs["timestep_resolution"] = cost_optimal_model.inputs.timestep_resolution
 
     all_data_dict.update(get_input_costs(cost_optimal_model.inputs, **kwargs))
+    energy_caps = pd.concat(
+        [get_energy_caps(model, "energy", **kwargs) for model in model_dict.values()],
+        keys=model_dict.keys(), names=new_dimension_name,
+    )
+    valid_loc_techs = get_valid_loc_techs(energy_caps)
+    kwargs["valid_loc_techs"] = valid_loc_techs
+
     output_costs = pd.concat(
         [get_output_costs(model, **kwargs) for model in model_dict.values()],
         keys=model_dict.keys(), names=new_dimension_name
@@ -84,8 +91,8 @@ def combine_scenarios_to_one_dict(
         )
         dataframe_to_dict_elements(output_emissions, all_data_dict)
 
-    energy_caps = pd.concat(
-        [get_caps(model, **kwargs) for model in model_dict.values()],
+    storage_caps = pd.concat(
+        [get_storage_caps(model, valid_loc_techs, **kwargs) for model in model_dict.values()],
         keys=model_dict.keys(), names=new_dimension_name,
     )
     energy_flows = pd.concat(
@@ -105,7 +112,7 @@ def combine_scenarios_to_one_dict(
     names = names.reindex(energy_caps.index.get_level_values("techs").unique()).fillna(NEW_TECH_NAMES)
     assert names.isna().sum() == 0
 
-    for df in [output_costs, energy_caps, energy_flows, energy_flows_sum, energy_flows_max]:
+    for df in [output_costs, energy_caps, energy_flows, energy_flows_sum, energy_flows_max, storage_caps]:
         dataframe_to_dict_elements(df, all_data_dict)
 
     all_data_dict["names"] = names
@@ -118,22 +125,40 @@ def dataframe_to_dict_elements(df, data_dict):
     data_dict.update({col_name: df.loc[:, col_name] for col_name in df.columns})
 
 
-def get_caps(model, **kwargs):
-    """Get storage and energy capacity"""
-    caps = []
-    for cap_type in ["energy", "storage"]:
-        mapped_da = map_da(model._model_data[f"{cap_type}_cap"], keep_demand=False, **kwargs)
-        series = clean_series(mapped_da, zero_threshold=ZERO_THRESHOLD, halve_transmission=True)
-        if series is None:
-            continue
-        else:
-            caps.append(
-                series
-                .sum(level=["techs", "locs"])
-                .to_frame("{}_capacity".format("nameplate" if cap_type == "energy" else cap_type))
-                .div(10)
-            )
-    return pd.concat(caps, axis=1)
+def get_energy_caps(model, **kwargs):
+    """Get energy capacity"""
+    mapped_da = map_da(model._model_data["energy_cap"], keep_demand=False, **kwargs)
+    series = clean_series(mapped_da, zero_threshold=ZERO_THRESHOLD, halve_transmission=True)
+    if series is None:
+        return None
+    else:
+        return (
+            series
+            .sum(level=["techs", "locs"])
+            .to_frame("nameplate_capacity")
+            .div(10)
+        )
+
+
+def get_storage_caps(model, **kwargs):
+    """Get storage capacity"""
+    mapped_da = map_da(model._model_data["storage_cap"], keep_demand=False, **kwargs)
+    series = clean_series(mapped_da, halve_transmission=True, **kwargs)
+    if series is None:
+        return None
+    else:
+        return (
+            series
+            .sum(level=["techs", "locs"])
+            .to_frame("storage_capacity")
+            .assign(unit="twh")
+            .set_index("unit", append=True)
+            .div(10)
+        )
+
+
+def get_valid_loc_techs(df):
+    return df.index.get_level_values("locs") + "::" + df.index.get_level_values("techs")
 
 
 def get_a_flow(model, flow_direction, timeseries_agg, **kwargs):
@@ -143,7 +168,7 @@ def get_a_flow(model, flow_direction, timeseries_agg, **kwargs):
     )
     name = f"flow_{direction}_{timeseries_agg}" if timeseries_agg is not None else f"flow_{direction}"
     return (
-        clean_series(mapped_da, halve_transmission=True)
+        clean_series(mapped_da, halve_transmission=True, **kwargs)
         .div(10)
         .abs()
         .to_frame(name)
@@ -181,7 +206,7 @@ def map_da(da, keep_demand=True, timeseries_agg="sum", loc_tech_agg="sum", **kwa
         return mapped_da
 
 
-def clean_series(da, zero_threshold=0, halve_transmission=False):
+def clean_series(da, zero_threshold=0, halve_transmission=False, valid_loc_techs=None, **kwargs):
     """
     Get series from dataarray in which we clean out useless info.
 
@@ -205,6 +230,11 @@ def clean_series(da, zero_threshold=0, halve_transmission=False):
         .where(lambda x: (~np.isinf(x)) & (abs(x) > zero_threshold))
         .dropna()
     )
+    if valid_loc_techs is not None:
+        clean_series = clean_series.where(
+            (clean_series.index.get_level_values("locs") + "::" + clean_series.index.get_level_values("techs"))
+            .isin(valid_loc_techs)
+        ).dropna()
     if halve_transmission is True:
         clean_series[clean_series.index.get_level_values("techs").isin(TRANSMISSION_NAMES)] /= 2
     if clean_series.empty:
@@ -292,7 +322,9 @@ def add_units_to_caps(energy_caps, energy_flows, cost_optimal_model):
     return energy_caps_with_units
 
 
-def get_output_costs(model, cost_class="monetary", unit="billion_2015eur", mapping=COST_NAME_MAPPING, **kwargs):
+def get_output_costs(
+    model, cost_class="monetary", unit="billion_2015eur", mapping=COST_NAME_MAPPING, **kwargs
+):
     """
     Get costs associated with model results
     """
@@ -301,7 +333,7 @@ def get_output_costs(model, cost_class="monetary", unit="billion_2015eur", mappi
         cost_da = model._model_data[_cost].loc[{"costs": cost_class}]
         mapped_da = map_da(cost_da, keep_demand=False, **kwargs)
 
-        cost_series = clean_series(mapped_da)
+        cost_series = clean_series(mapped_da, halve_transmission=True, **kwargs)
         if cost_series is None:
             continue
         else:
@@ -314,7 +346,10 @@ def get_output_costs(model, cost_class="monetary", unit="billion_2015eur", mappi
     return pd.concat(costs.values(), keys=costs.keys(), axis=1)
 
 
-def get_input_costs(inputs, cost_class="monetary", unit="billion_2015eur", mapping=COST_NAME_MAPPING, **kwargs):
+def get_input_costs(
+    inputs, cost_class="monetary", unit="billion_2015eur", mapping=COST_NAME_MAPPING,
+    **kwargs
+):
     """
     Get costs used as model inputs
     """

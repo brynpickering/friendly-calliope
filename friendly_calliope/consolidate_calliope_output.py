@@ -136,7 +136,7 @@ def dataframe_to_dict_elements(df, data_dict):
 def get_energy_caps(model, **kwargs):
     """Get energy capacity"""
     mapped_da = map_da(model._model_data["energy_cap"], keep_demand=False, **kwargs)
-    series = clean_series(mapped_da, zero_threshold=ZERO_THRESHOLD, halve_transmission=True)
+    series = clean_series(mapped_da, zero_threshold=ZERO_THRESHOLD)
     if series is None:
         return None
     else:
@@ -151,7 +151,7 @@ def get_energy_caps(model, **kwargs):
 def get_storage_caps(model, **kwargs):
     """Get storage capacity"""
     mapped_da = map_da(model._model_data["storage_cap"], keep_demand=False, **kwargs)
-    series = clean_series(mapped_da, halve_transmission=True, **kwargs)
+    series = clean_series(mapped_da, **kwargs)
     if series is None:
         return None
     else:
@@ -174,7 +174,7 @@ def get_a_flow(model, flow_direction, timeseries_agg, **kwargs):
         model._model_data[f"carrier_{flow_direction}"], timeseries_agg=timeseries_agg, **kwargs
     )
     return (
-        clean_series(mapped_da, halve_transmission=True, **kwargs)
+        clean_series(mapped_da, **kwargs)
         .div(10)
         .abs()
         .to_frame(flow_name(flow_direction, timeseries_agg))
@@ -209,7 +209,8 @@ def get_flows(model, timeseries_agg, **kwargs):
 
 
 def get_transmission_flows(model, timeseries_agg, **kwargs):
-    flows = get_flows(model, timeseries_agg, transmission_only=True, **kwargs)
+    kwargs["valid_loc_techs"] = None
+    flows = get_flows(model, timeseries_agg, transmission_only=True, halve_transmission=False, **kwargs)
     _from = "exporting_region"
     _to = "importing_region"
     index_names = flows.index.rename({"techs": _from, "locs": _to}).names
@@ -250,7 +251,7 @@ def map_da(da, keep_demand=True, timeseries_agg="sum", loc_tech_agg="sum", **kwa
         return mapped_da
 
 
-def clean_series(da, zero_threshold=0, halve_transmission=False, valid_loc_techs=None, **kwargs):
+def clean_series(da, zero_threshold=0, halve_transmission=True, valid_loc_techs=None, **kwargs):
     """
     Get series from dataarray in which we clean out useless info.
 
@@ -377,7 +378,7 @@ def get_output_costs(
         cost_da = model._model_data[_cost].loc[{"costs": cost_class}]
         mapped_da = map_da(cost_da, keep_demand=False, **kwargs)
 
-        cost_series = clean_series(mapped_da, halve_transmission=True, **kwargs)
+        cost_series = clean_series(mapped_da, **kwargs)
         if cost_series is None:
             continue
         else:
@@ -414,7 +415,7 @@ def get_input_costs(
             _unit = f"{unit}_per_twh"
         _name = mapping[var_name]
         mapped_da = map_da(var_data.loc[{"costs": cost_class}], loc_tech_agg="mean", **kwargs)
-        series = clean_series(mapped_da)
+        series = clean_series(mapped_da, halve_transmission=False)
         if series is not None:
             costs[_name] = (
                 series

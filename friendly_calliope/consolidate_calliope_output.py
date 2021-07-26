@@ -92,7 +92,7 @@ def combine_scenarios_to_one_dict(
         dataframe_to_dict_elements(output_emissions, all_data_dict)
 
     storage_caps = pd.concat(
-        [get_storage_caps(model, valid_loc_techs, **kwargs) for model in model_dict.values()],
+        [get_storage_caps(model, **kwargs) for model in model_dict.values()],
         keys=model_dict.keys(), names=new_dimension_name,
     )
     energy_flows = pd.concat(

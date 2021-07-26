@@ -69,7 +69,7 @@ def combine_scenarios_to_one_dict(
 
     all_data_dict.update(get_input_costs(cost_optimal_model.inputs, **kwargs))
     energy_caps = pd.concat(
-        [get_energy_caps(model, "energy", **kwargs) for model in model_dict.values()],
+        [get_energy_caps(model, **kwargs) for model in model_dict.values()],
         keys=model_dict.keys(), names=new_dimension_name,
     )
     valid_loc_techs = get_valid_loc_techs(energy_caps)

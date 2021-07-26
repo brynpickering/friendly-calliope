@@ -112,6 +112,10 @@ def combine_scenarios_to_one_dict(
         [get_transmission_flows(model, "sum", **kwargs) for model in model_dict.values()],
         keys=model_dict.keys(), names=new_dimension_name,
     )
+    transmission_caps = pd.concat(
+        [get_transmission_caps(model, **kwargs) for model in model_dict.values()],
+        keys=model_dict.keys(), names=new_dimension_name,
+    )
     energy_caps = add_units_to_caps(energy_caps, energy_flows_max, cost_optimal_model)
 
     names = names.reindex(energy_caps.index.get_level_values("techs").unique()).fillna(NEW_TECH_NAMES)
@@ -119,7 +123,7 @@ def combine_scenarios_to_one_dict(
 
     for df in [
         output_costs, energy_caps, energy_flows, energy_flows_sum, energy_flows_max,
-        storage_caps, transmission_flows
+        storage_caps, transmission_flows, transmission_caps
     ]:
         dataframe_to_dict_elements(df, all_data_dict)
 
@@ -208,9 +212,13 @@ def get_flows(model, timeseries_agg, **kwargs):
     return flow
 
 
-def get_transmission_flows(model, timeseries_agg, region_group="countries", **kwargs):
+def get_transmission_flows(model, timeseries_agg, **kwargs):
     kwargs["valid_loc_techs"] = None
-    flows = get_flows(model, timeseries_agg, transmission_only=True, halve_transmission=False, **kwargs)
+    region_group = kwargs.get("region_group", "countries")
+    flows = get_flows(
+        model, timeseries_agg, transmission_only=True, halve_transmission=False,
+        zero_threshold=ZERO_THRESHOLD, **kwargs
+    )
     _from = "exporting_region"
     _to = "importing_region"
     index_names = flows.rename_axis(index={"techs": _from, "locs": _to}).index.names
@@ -240,7 +248,28 @@ def get_transmission_flows(model, timeseries_agg, region_group="countries", **kw
     )
 
     net_import = import_export["import"] - import_export["export"]
-    return net_import.to_frame("net_import")
+    # Don't keep links that have the same importand export location
+    return net_import[
+        net_import.index.get_level_values("exporting_region") !=
+        net_import.index.get_level_values("importing_region")
+    ].to_frame("net_import")
+
+
+def get_transmission_caps(model, **kwargs):
+    region_group = kwargs.get("region_group", "countries")
+    _from = "exporting_region"
+    _to = "importing_region"
+    mapped_da = map_da(model._model_data["energy_cap"], keep_demand=False, transmission_only=True, **kwargs)
+    df = clean_series(mapped_da, zero_threshold=ZERO_THRESHOLD).unstack("locs")
+    df.index = df.index.str.split(":", expand=True).rename(["techs", _from])
+    series = (
+        df
+        .rename(lambda x: rename_locations(pd.Series([x]), region_group).item(), level=_from)
+        .rename(lambda x: "ac_transmission" if x.startswith("ac") else "dc_transmission", level="techs")
+        .rename_axis(columns=_to)
+        .stack()
+    )
+    return series.groupby(level=series.index.names).sum().to_frame("net_transfer_capacity")
 
 
 def map_da(da, keep_demand=True, timeseries_agg="sum", loc_tech_agg="sum", **kwargs):

@@ -41,7 +41,8 @@ EMISSIONS_NAME_MAPPING = {
 }
 
 NEW_TECH_NAMES = {
-    "import": "Transmission between countries inside and outside the region of interest",
+    "internal_to_external_transmission": "Transmission from countries inside the region of interest to those outside it",
+    "external_to_internal_transmission": "Transmission from countries outside the region of interest to those inside it",
     "external_transmission": "Transmission between and within countries outside the region of interest",
     "heat_storage_big": "District-scale heat storage vessels",
     "heat_storage_small": "Building-scale heat storage vessels",
@@ -49,7 +50,7 @@ NEW_TECH_NAMES = {
     "wind_onshore": "Onshore wind",
 }
 
-TRANSMISSION_NAMES = ["import", "external_transmission", "internal_transmission"]
+TRANSMISSION_NAMES = ["internal_to_external_transmission", "external_to_internal_transmission", "external_transmission", "internal_transmission"]
 
 
 def combine_scenarios_to_one_dict(
@@ -99,20 +100,27 @@ def combine_scenarios_to_one_dict(
         [get_flows(model, None, **kwargs) for model in model_dict.values()],
         keys=model_dict.keys(), names=new_dimension_name,
     )
-    energy_flows_sum = strip_small_techs(energy_caps, pd.concat(
+    energy_flows_sum = pd.concat(
         [get_flows(model, "sum", **kwargs) for model in model_dict.values()],
         keys=model_dict.keys(), names=new_dimension_name,
-    ))
-    energy_flows_max = strip_small_techs(energy_caps, pd.concat(
+    )
+    energy_flows_max = pd.concat(
         [get_flows(model, "max", **kwargs) for model in model_dict.values()],
         keys=model_dict.keys(), names=new_dimension_name,
-    ))
+    )
+    transmission_flows = pd.concat(
+        [get_transmission_flows(model, "sum", **kwargs) for model in model_dict.values()],
+        keys=model_dict.keys(), names=new_dimension_name,
+    )
     energy_caps = add_units_to_caps(energy_caps, energy_flows_max, cost_optimal_model)
 
     names = names.reindex(energy_caps.index.get_level_values("techs").unique()).fillna(NEW_TECH_NAMES)
     assert names.isna().sum() == 0
 
-    for df in [output_costs, energy_caps, energy_flows, energy_flows_sum, energy_flows_max, storage_caps]:
+    for df in [
+        output_costs, energy_caps, energy_flows, energy_flows_sum, energy_flows_max,
+        storage_caps, transmission_flows
+    ]:
         dataframe_to_dict_elements(df, all_data_dict)
 
     all_data_dict["names"] = names
@@ -162,19 +170,22 @@ def get_valid_loc_techs(df):
 
 
 def get_a_flow(model, flow_direction, timeseries_agg, **kwargs):
-    direction = "out" if flow_direction == "prod" else "in"
     mapped_da = map_da(
         model._model_data[f"carrier_{flow_direction}"], timeseries_agg=timeseries_agg, **kwargs
     )
-    name = f"flow_{direction}_{timeseries_agg}" if timeseries_agg is not None else f"flow_{direction}"
     return (
         clean_series(mapped_da, halve_transmission=True, **kwargs)
         .div(10)
         .abs()
-        .to_frame(name)
+        .to_frame(flow_name(flow_direction, timeseries_agg))
         .assign(unit='twh')
         .reset_index()
     )
+
+
+def flow_name(flow_direction, timeseries_agg):
+    direction = "out" if flow_direction == "prod" else "in"
+    return f"flow_{direction}_{timeseries_agg}" if timeseries_agg is not None else f"flow_{direction}"
 
 
 def get_flows(model, timeseries_agg, **kwargs):
@@ -195,6 +206,39 @@ def get_flows(model, timeseries_agg, **kwargs):
         axis=1
     )
     return flow
+
+
+def get_transmission_flows(model, timeseries_agg, **kwargs):
+    flows = get_flows(model, timeseries_agg, transmission_only=True, **kwargs)
+    _from = "exporting_region"
+    _to = "importing_region"
+    index_names = flows.index.rename({"techs": _from, "locs": _to}).names
+    summed_flows = []
+    for flow in ["prod", "con"]:
+        _flow = flows[flow_name(flow, timeseries_agg)]
+        remote_loc = _to if flow == "con" else _from
+        loc = _from if flow == "con" else _to
+        _flow.index = _flow.index.set_levels(
+            flow.index.levels[0].str.split(":", expand=True).levels[1], level="techs"
+        )
+        _flow = _flow.rename_axis(index={"techs": remote_loc, "locs": loc})
+        _flow_summed_across_all_transmission_techs = _flow.groupby(level=index_names).sum()
+        summed_flows.append(_flow_summed_across_all_transmission_techs)
+
+    # take the mean, which averages over transmission losses in either direction along a link
+    transmission = pd.concat(summed_flows, axis=1).mean(axis=1)
+    import_export = pd.concat(
+        [
+            transmission,
+            transmission
+            .rename_axis(index={_from: _to, _to: _from})
+            .reorder_levels(transmission.index.names)
+        ],
+        axis=1, keys=["import", "export"], sort=True
+    )
+
+    net_import = import_export["import"] - import_export["export"]
+    return net_import.to_frame("net_import")
 
 
 def map_da(da, keep_demand=True, timeseries_agg="sum", loc_tech_agg="sum", **kwargs):
@@ -383,22 +427,6 @@ def get_input_costs(
     return costs
 
 
-def strip_small_techs(energy_caps, energy_flows):
-    """
-    Reindex energy flows based on nameplate capacity index,
-    which has a higher threshold given for `zero_threshold` in `clean_series`
-    """
-    levels_to_move = [i for i in energy_flows.index.names if i not in energy_caps.index.names]
-    return (
-        energy_flows
-        .unstack(levels_to_move)
-        .reindex(energy_caps.index)
-        .stack(levels_to_move)
-        .reorder_levels(energy_flows.index.names)
-        .append(energy_flows.filter(regex="demand", axis=0))
-    )
-
-
 def get_imports(loc_tech_mapping, group=EU28, groupname="eu", region_group="countries"):
     """
     Separate transmission links into those which are and are not inside a given
@@ -421,8 +449,8 @@ def get_imports(loc_tech_mapping, group=EU28, groupname="eu", region_group="coun
         return loc_tech_mapping
     _in = loc_tech_mapping[0].isin(group)
     _remote_in = rename_locations(loc_tech_mapping[1].str.split(":", expand=True)[1], region_group).isin(group)
-    loc_tech_mapping.loc[is_transmission & _in & ~_remote_in, 1] = "import"
-    loc_tech_mapping.loc[is_transmission & ~_in & _remote_in, 1] = "import"
+    loc_tech_mapping.loc[is_transmission & _in & ~_remote_in, 1] = "external_to_internal_transmission"
+    loc_tech_mapping.loc[is_transmission & ~_in & _remote_in, 1] = "internal_to_external_transmission"
     loc_tech_mapping.loc[is_transmission & ~_in & ~_remote_in, 1] = "external_transmission"
     loc_tech_mapping.loc[is_transmission & _in & _remote_in, 1] = "internal_transmission"
     assert len(loc_tech_mapping[loc_tech_mapping[1].str.find(":") > -1]) == 0
@@ -438,7 +466,7 @@ def rename_locations(locations, region_group):
 
 def get_cleaned_dim_mapping(
     da, dim, keep_demand=True, dim_agg="sum", import_group=EU28, import_groupname="eu",
-    region_group="countries", **kwargs
+    region_group="countries", transmission_only=False, **kwargs
 ):
     """
     Go from a concatenated location::technology(::carrier) list into an unconcatenated
@@ -467,7 +495,10 @@ def get_cleaned_dim_mapping(
     """
     split_dim = da[dim].to_series().str.split("::", expand=True)
     split_dim[0] = rename_locations(split_dim[0], region_group)
-    split_dim = get_imports(split_dim, import_group, import_groupname, region_group)
+    if transmission_only:
+        split_dim = split_dim[split_dim[1].str.find(":") > -1]
+    else:
+        split_dim = get_imports(split_dim, import_group, import_groupname, region_group)
     split_dim = split_dim.loc[split_dim[1].str.find("tech_heat") == -1]
     if keep_demand is False:
         split_dim = split_dim.loc[split_dim[1].str.find("demand") == -1]
@@ -478,8 +509,6 @@ def get_cleaned_dim_mapping(
             "heat_storage" + heat_storage.str.partition("heat_storage")[2]
         )
     split_dim.loc[split_dim[1].str.startswith("wind_onshore"), 1] = "wind_onshore"
-    split_dim.loc[split_dim[1].str.startswith("ac_"), 1] = "ac_transmission"
-    split_dim.loc[split_dim[1].str.startswith("dc_"), 1] = "dc_transmission"
 
     if "carriers" in dim:
         split_dim.loc[split_dim[2].str.endswith("_heat"), 2] = "heat"

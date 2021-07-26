@@ -213,7 +213,7 @@ def get_transmission_flows(model, timeseries_agg, **kwargs):
     flows = get_flows(model, timeseries_agg, transmission_only=True, halve_transmission=False, **kwargs)
     _from = "exporting_region"
     _to = "importing_region"
-    index_names = flows.index.rename({"techs": _from, "locs": _to}).names
+    index_names = flows.rename_axis(index={"techs": _from, "locs": _to}).index.names
     summed_flows = []
     for flow in ["prod", "con"]:
         _flow = flows[flow_name(flow, timeseries_agg)]

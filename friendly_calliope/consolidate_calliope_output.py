@@ -41,16 +41,10 @@ EMISSIONS_NAME_MAPPING = {
 }
 
 NEW_TECH_NAMES = {
-    "internal_to_external_transmission": "Transmission from countries inside the region of interest to those outside it",
-    "external_to_internal_transmission": "Transmission from countries outside the region of interest to those inside it",
-    "external_transmission": "Transmission between and within countries outside the region of interest",
     "heat_storage_big": "District-scale heat storage vessels",
     "heat_storage_small": "Building-scale heat storage vessels",
-    "internal_transmission": "Transmission between and within countries inside the region of interest",
     "wind_onshore": "Onshore wind",
 }
-
-TRANSMISSION_NAMES = ["internal_to_external_transmission", "external_to_internal_transmission", "external_transmission", "internal_transmission"]
 
 
 def combine_scenarios_to_one_dict(
@@ -108,22 +102,15 @@ def combine_scenarios_to_one_dict(
         [get_flows(model, "max", **kwargs) for model in model_dict.values()],
         keys=model_dict.keys(), names=new_dimension_name,
     )
-    transmission_flows = pd.concat(
-        [get_transmission_flows(model, "sum", **kwargs) for model in model_dict.values()],
-        keys=model_dict.keys(), names=new_dimension_name,
-    )
-    transmission_caps = pd.concat(
-        [get_transmission_caps(model, **kwargs) for model in model_dict.values()],
-        keys=model_dict.keys(), names=new_dimension_name,
-    )
+    get_transmission_data(model_dict, new_dimension_name, **kwargs)
+
     energy_caps = add_units_to_caps(energy_caps, energy_flows_max, cost_optimal_model)
 
     names = names.reindex(energy_caps.index.get_level_values("techs").unique()).fillna(NEW_TECH_NAMES)
     assert names.isna().sum() == 0
 
     for df in [
-        output_costs, energy_caps, energy_flows, energy_flows_sum, energy_flows_max,
-        storage_caps, transmission_flows, transmission_caps
+        output_costs, energy_caps, energy_flows, energy_flows_sum, energy_flows_max, storage_caps
     ]:
         dataframe_to_dict_elements(df, all_data_dict)
 
@@ -212,64 +199,102 @@ def get_flows(model, timeseries_agg, **kwargs):
     return flow
 
 
-def get_transmission_flows(model, timeseries_agg, **kwargs):
+def get_transmission_data(model_dict, new_dimension_name, **kwargs):
     kwargs["valid_loc_techs"] = None
     region_group = kwargs.get("region_group", "countries")
-    flows = get_flows(
-        model, timeseries_agg, transmission_only=True, halve_transmission=False,
-        zero_threshold=ZERO_THRESHOLD, **kwargs
-    )
     _from = "exporting_region"
     _to = "importing_region"
-    index_names = flows.rename_axis(index={"techs": _from, "locs": _to}).index.names
-    summed_flows = []
-    for flow in ["prod", "con"]:
-        _flow = flows[flow_name(flow, timeseries_agg)]
-        remote_loc = _to if flow == "con" else _from
-        loc = _from if flow == "con" else _to
-        _flow = (
-            _flow
-            .rename(lambda x: rename_locations(pd.Series([x.split(":")[1]]), region_group).item(), level="techs")
-            .rename_axis(index={"techs": remote_loc, "locs": loc})
+
+    def _rename_remote(x):
+        return rename_locations(pd.Series([x]), region_group).item()
+
+    def _rename_tech(x):
+        return "ac_transmission" if x.startswith("ac") else "dc_transmission"
+
+    def _get_transmission_flows(model, timeseries_agg, **kwargs):
+        flows = get_flows(
+            model, timeseries_agg, transmission_only=True, zero_threshold=ZERO_THRESHOLD, **kwargs
         )
-        _flow_summed_across_all_transmission_techs = _flow.groupby(level=index_names).sum()
-        summed_flows.append(_flow_summed_across_all_transmission_techs)
+        index_names = flows.rename_axis(index={"techs": _from, "locs": _to}).index.names
+        summed_flows = []
+        for flow in ["prod", "con"]:
+            _flow = flows[flow_name(flow, timeseries_agg)]
+            remote_loc = _to if flow == "con" else _from
+            loc = _from if flow == "con" else _to
+            _flow = (
+                _flow
+                .rename(lambda x: _rename_remote(x.split(":")[1]), level="techs")
+                .rename_axis(index={"techs": remote_loc, "locs": loc})
+            )
+            _flow_summed_across_all_transmission_techs = _flow.groupby(level=index_names).sum()
+            summed_flows.append(_flow_summed_across_all_transmission_techs)
 
-    # take the mean, which averages over transmission losses in either direction along a link
-    transmission = pd.concat(summed_flows, axis=1).mean(axis=1)
-    import_export = pd.concat(
-        [
-            transmission,
-            transmission
-            .rename_axis(index={_from: _to, _to: _from})
-            .reorder_levels(transmission.index.names)
-        ],
-        axis=1, keys=["import", "export"], sort=True
+        # take the mean, which averages over transmission losses in either direction along a link
+        transmission = pd.concat(summed_flows, axis=1).mean(axis=1)
+        import_export = pd.concat(
+            [
+                transmission,
+                transmission
+                .rename_axis(index={_from: _to, _to: _from})
+                .reorder_levels(transmission.index.names)
+            ],
+            axis=1, keys=["import", "export"], sort=True
+        )
+
+        net_import = import_export["import"] - import_export["export"]
+        return net_import
+
+    def _get_transmission_caps(model, **kwargs):
+        mapped_da = map_da(model._model_data["energy_cap"], keep_demand=False, transmission_only=True, **kwargs)
+        df = clean_series(mapped_da, zero_threshold=ZERO_THRESHOLD).unstack("locs")
+        df.index = df.index.str.split(":", expand=True).rename(["techs", _from])
+        series = (
+            df
+            .rename(_rename_remote, level=_from)
+            .rename(_rename_tech, level="techs")
+            .rename_axis(columns=_to)
+            .assign(unit="tw", carrier="electricity")
+            .set_index(["unit", "carrier"], append=True)
+            .stack()
+        )
+        return series.groupby(level=series.index.names).sum()
+
+    def _get_transmission_costs(model, **kwargs):
+        cost_class = "monetary"
+        unit = "billion_2015eur"
+        mapped_da = map_da(model._model_data["cost"].loc[{"costs": cost_class}], keep_demand=False, transmission_only=True, **kwargs)
+        df = clean_series(mapped_da, zero_threshold=ZERO_THRESHOLD).unstack("locs")
+        df.index = df.index.str.split(":", expand=True).rename(["techs", _from])
+        series = (
+            df
+            .rename(_rename_remote, level=_from)
+            .rename(_rename_tech, level="techs")
+            .rename_axis(columns=_to)
+            .assign(unit=unit)
+            .set_index("unit", append=True)
+            .stack()
+        )
+        return series.groupby(level=series.index.names).sum()
+
+    caps = pd.concat(
+        [_get_transmission_caps(model, **kwargs) for model in model_dict.values()],
+        keys=model_dict.keys(), names=new_dimension_name,
+    )
+    flows = pd.concat(
+        [_get_transmission_flows(model, "sum", **kwargs) for model in model_dict.values()],
+        keys=model_dict.keys(), names=new_dimension_name,
+    )
+    costs = pd.concat(
+        [_get_transmission_costs(model, **kwargs) for model in model_dict.values()],
+        keys=model_dict.keys(), names=new_dimension_name,
     )
 
-    net_import = import_export["import"] - import_export["export"]
-    # Don't keep links that have the same importand export location
-    return net_import[
-        net_import.index.get_level_values("exporting_region") !=
-        net_import.index.get_level_values("importing_region")
-    ].to_frame("net_import")
+    flows_cleaned = flows.reindex(caps.groupby(level=flows.index.names).sum().index())
+    costs_cleaned = costs.reindex(caps.groupby(level=costs.index.names).sum().index())
 
-
-def get_transmission_caps(model, **kwargs):
-    region_group = kwargs.get("region_group", "countries")
-    _from = "exporting_region"
-    _to = "importing_region"
-    mapped_da = map_da(model._model_data["energy_cap"], keep_demand=False, transmission_only=True, **kwargs)
-    df = clean_series(mapped_da, zero_threshold=ZERO_THRESHOLD).unstack("locs")
-    df.index = df.index.str.split(":", expand=True).rename(["techs", _from])
-    series = (
-        df
-        .rename(lambda x: rename_locations(pd.Series([x]), region_group).item(), level=_from)
-        .rename(lambda x: "ac_transmission" if x.startswith("ac") else "dc_transmission", level="techs")
-        .rename_axis(columns=_to)
-        .stack()
-    )
-    return series.groupby(level=series.index.names).sum().to_frame("net_transfer_capacity")
+    model_dict["net_transfer_capacity"] = caps
+    model_dict["net_import"] = flows_cleaned
+    model_dict["total_transmission_costs"] = costs_cleaned
 
 
 def map_da(da, keep_demand=True, timeseries_agg="sum", loc_tech_agg="sum", **kwargs):
@@ -281,7 +306,7 @@ def map_da(da, keep_demand=True, timeseries_agg="sum", loc_tech_agg="sum", **kwa
         return mapped_da
 
 
-def clean_series(da, zero_threshold=0, halve_transmission=True, valid_loc_techs=None, **kwargs):
+def clean_series(da, zero_threshold=0, valid_loc_techs=None, **kwargs):
     """
     Get series from dataarray in which we clean out useless info.
 
@@ -293,11 +318,6 @@ def clean_series(da, zero_threshold=0, halve_transmission=True, valid_loc_techs=
         Value above which all valid data lies.
         Anything below this in absolute magnitude will be deemed as invalid and removed from the data.
         This exists to remove the small values left over from the Barrier LP method.
-    halve_transmission : bool
-        If True, halve the value associated with transmission technologies.
-        This is required when dealing with Calliope models as there are always two technologies associated
-        with a single transmission link (so summing them will erroneously double the value).
-        Should be False when passing in averaged data.
     """
     series = da.to_series()
     clean_series = (
@@ -310,8 +330,6 @@ def clean_series(da, zero_threshold=0, halve_transmission=True, valid_loc_techs=
             (clean_series.index.get_level_values("locs") + "::" + clean_series.index.get_level_values("techs"))
             .isin(valid_loc_techs)
         ).dropna()
-    if halve_transmission is True:
-        clean_series[clean_series.index.get_level_values("techs").isin(TRANSMISSION_NAMES)] /= 2
     if clean_series.empty:
         return None
     else:
@@ -445,7 +463,7 @@ def get_input_costs(
             _unit = f"{unit}_per_twh"
         _name = mapping[var_name]
         mapped_da = map_da(var_data.loc[{"costs": cost_class}], loc_tech_agg="mean", **kwargs)
-        series = clean_series(mapped_da, halve_transmission=False)
+        series = clean_series(mapped_da)
         if series is not None:
             costs[_name] = (
                 series
@@ -456,36 +474,6 @@ def get_input_costs(
             costs[_name].loc[costs[_name].index.get_level_values("unit").str.find("per_tw") > -1] *= 10
 
     return costs
-
-
-def get_imports(loc_tech_mapping, group=EU28, groupname="eu", region_group="countries"):
-    """
-    Separate transmission links into those which are and are not inside a given
-    set of regions. These regions default to the EU28 (i.e. including the UK)
-
-    Parameters
-    ----------
-    import_group : array of strings, default = all countries of the EU28
-        List of regions (post-grouping based on `region_group`) to consider as the
-        'region of interest' for imports/exports across the border
-    import_groupname : string, default = 'eu'
-        Name of the 'region of interest'
-    region_group : string or mapping, default = "countries"
-        If "countries", group locations to a country level, otherwise group based on
-        a mapping from model locations to group names. Mapping allows e.g. one country to
-        remain as sub-country regions, while all others are grouped to countries or 'rest'
-    """
-    is_transmission = loc_tech_mapping[1].str.find(":") > -1
-    if len(loc_tech_mapping[is_transmission]) == 0:
-        return loc_tech_mapping
-    _in = loc_tech_mapping[0].isin(group)
-    _remote_in = rename_locations(loc_tech_mapping[1].str.split(":", expand=True)[1], region_group).isin(group)
-    loc_tech_mapping.loc[is_transmission & _in & ~_remote_in, 1] = "external_to_internal_transmission"
-    loc_tech_mapping.loc[is_transmission & ~_in & _remote_in, 1] = "internal_to_external_transmission"
-    loc_tech_mapping.loc[is_transmission & ~_in & ~_remote_in, 1] = "external_transmission"
-    loc_tech_mapping.loc[is_transmission & _in & _remote_in, 1] = "internal_transmission"
-    assert len(loc_tech_mapping[loc_tech_mapping[1].str.find(":") > -1]) == 0
-    return loc_tech_mapping
 
 
 def rename_locations(locations, region_group):
@@ -529,7 +517,7 @@ def get_cleaned_dim_mapping(
     if transmission_only:
         split_dim = split_dim[split_dim[1].str.find(":") > -1]
     else:
-        split_dim = get_imports(split_dim, import_group, import_groupname, region_group)
+        split_dim = split_dim[split_dim[1].str.find(":") == -1]
     split_dim = split_dim.loc[split_dim[1].str.find("tech_heat") == -1]
     if keep_demand is False:
         split_dim = split_dim.loc[split_dim[1].str.find("demand") == -1]

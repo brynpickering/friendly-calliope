@@ -276,6 +276,9 @@ def get_transmission_data(model_dict, new_dimension_name, **kwargs):
         )
         return series.groupby(level=series.index.names).sum()
 
+    def _concat_from_to(index):
+        return index.get_level_values(_from) + "::" + index.get_level_values(_to)
+
     caps = pd.concat(
         [_get_transmission_caps(model, **kwargs) for model in model_dict.values()],
         keys=model_dict.keys(), names=new_dimension_name,
@@ -289,8 +292,9 @@ def get_transmission_data(model_dict, new_dimension_name, **kwargs):
         keys=model_dict.keys(), names=new_dimension_name,
     )
 
-    flows_cleaned = flows.reindex(caps.groupby(level=flows.index.names).sum().index())
-    costs_cleaned = costs.reindex(caps.groupby(level=costs.index.names).sum().index())
+    valid_connections = _concat_from_to(caps.index).drop_duplicates()
+    flows_cleaned = flows.where(_concat_from_to(flows.index).isin(valid_connections)).dropna()
+    costs_cleaned = costs.where(_concat_from_to(costs.index).isin(valid_connections)).dropna()
 
     model_dict["net_transfer_capacity"] = caps
     model_dict["net_import"] = flows_cleaned
@@ -326,14 +330,22 @@ def clean_series(da, zero_threshold=0, valid_loc_techs=None, **kwargs):
         .dropna()
     )
     if valid_loc_techs is not None:
-        clean_series = clean_series.where(
-            (clean_series.index.get_level_values("locs") + "::" + clean_series.index.get_level_values("techs"))
-            .isin(valid_loc_techs)
-        ).dropna()
+        clean_series = slice_on_loc_techs(clean_series, valid_loc_techs)
     if clean_series.empty:
         return None
     else:
         return clean_series
+
+
+def slice_on_loc_techs(series, loc_techs):
+    return (
+        series
+        .where((
+            series.index.get_level_values("locs") +
+            "::" + series.index.get_level_values("techs")
+        ).isin(loc_techs))
+        .dropna()
+    )
 
 
 def add_units_to_caps(energy_caps, energy_flows, cost_optimal_model):

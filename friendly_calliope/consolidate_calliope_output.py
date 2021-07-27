@@ -102,7 +102,7 @@ def combine_scenarios_to_one_dict(
         [get_flows(model, "max", **kwargs) for model in model_dict.values()],
         keys=model_dict.keys(), names=new_dimension_name,
     )
-    get_transmission_data(model_dict, new_dimension_name, **kwargs)
+    get_transmission_data(all_data_dict, model_dict, new_dimension_name, **kwargs)
 
     energy_caps = add_units_to_caps(energy_caps, energy_flows_max, cost_optimal_model)
 
@@ -199,7 +199,7 @@ def get_flows(model, timeseries_agg, **kwargs):
     return flow
 
 
-def get_transmission_data(model_dict, new_dimension_name, **kwargs):
+def get_transmission_data(data_dict, model_dict, new_dimension_name, **kwargs):
     kwargs["valid_loc_techs"] = None
     region_group = kwargs.get("region_group", "countries")
     _from = "exporting_region"
@@ -296,9 +296,9 @@ def get_transmission_data(model_dict, new_dimension_name, **kwargs):
     flows_cleaned = flows.where(_concat_from_to(flows.index).isin(valid_connections)).dropna()
     costs_cleaned = costs.where(_concat_from_to(costs.index).isin(valid_connections)).dropna()
 
-    model_dict["net_transfer_capacity"] = caps
-    model_dict["net_import"] = flows_cleaned
-    model_dict["total_transmission_costs"] = costs_cleaned
+    data_dict["net_transfer_capacity"] = caps
+    data_dict["net_import"] = flows_cleaned
+    data_dict["total_transmission_costs"] = costs_cleaned
 
 
 def map_da(da, keep_demand=True, timeseries_agg="sum", loc_tech_agg="sum", **kwargs):

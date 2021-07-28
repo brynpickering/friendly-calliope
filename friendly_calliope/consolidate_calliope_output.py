@@ -48,7 +48,8 @@ NEW_TECH_NAMES = {
 
 
 def combine_scenarios_to_one_dict(
-    model_dict, cost_optimal_model=None, new_dimension_name="scenario", **kwargs
+    model_dict, cost_optimal_model=None, new_dimension_name="scenario", return_hourly=True,
+    **kwargs
 ):
     """
     Take in a dictionary of Calliope models and create a dictionary of processed data ready to share with the world
@@ -94,14 +95,11 @@ def combine_scenarios_to_one_dict(
         [get_flows(model, None, **kwargs) for model in model_dict.values()],
         keys=model_dict.keys(), names=new_dimension_name,
     )
-    energy_flows_sum = pd.concat(
-        [get_flows(model, "sum", **kwargs) for model in model_dict.values()],
-        keys=model_dict.keys(), names=new_dimension_name,
-    )
-    energy_flows_max = pd.concat(
-        [get_flows(model, "max", **kwargs) for model in model_dict.values()],
-        keys=model_dict.keys(), names=new_dimension_name,
-    )
+    energy_flows_sum = agg_flows(energy_flows, "sum")
+    energy_flows_max = agg_flows(energy_flows, "max")
+    energy_flows_monthly_sum = agg_flows(energy_flows, "sum", "1M")
+    energy_flows_monthly_max = agg_flows(energy_flows, "max", "1M")
+
     get_transmission_data(all_data_dict, model_dict, new_dimension_name, **kwargs)
 
     energy_caps = add_units_to_caps(energy_caps, energy_flows_max, cost_optimal_model)
@@ -110,9 +108,13 @@ def combine_scenarios_to_one_dict(
     assert names.isna().sum() == 0
 
     for df in [
-        output_costs, energy_caps, energy_flows, energy_flows_sum, energy_flows_max, storage_caps
+        output_costs, energy_caps, energy_flows_sum, energy_flows_max,
+        energy_flows_monthly_sum, energy_flows_monthly_max, storage_caps
     ]:
         dataframe_to_dict_elements(df, all_data_dict)
+
+    if return_hourly:
+        dataframe_to_dict_elements(energy_flows, all_data_dict)
 
     all_data_dict["names"] = names
 
@@ -177,6 +179,20 @@ def get_a_flow(model, flow_direction, timeseries_agg, **kwargs):
 def flow_name(flow_direction, timeseries_agg):
     direction = "out" if flow_direction == "prod" else "in"
     return f"flow_{direction}_{timeseries_agg}" if timeseries_agg is not None else f"flow_{direction}"
+
+
+def agg_flows(energy_flows_df, timeseries_agg, final_resolution=None):
+
+    flows_df = energy_flows_df.rename_axis(columns="flows").stack().unstack("timesteps")
+
+    agg_kwargs = {"min_count": 1} if timeseries_agg == "sum" else {}
+    if final_resolution is not None:
+        flow_agg = flows_df.resample(final_resolution, axis=1).apply(timeseries_agg, **agg_kwargs).stack()
+        flow_agg = flow_agg.rename(lambda x: f"{x}_{timeseries_agg}_{final_resolution}", level="flows")
+    else:
+        flow_agg = flows_df.apply(timeseries_agg, **agg_kwargs, axis=1)
+        flow_agg = flow_agg.rename(lambda x: f"{x}_{timeseries_agg}", level="flows")
+    return flow_agg.unstack("flows")
 
 
 def get_flows(model, timeseries_agg, **kwargs):
@@ -284,20 +300,25 @@ def get_transmission_data(data_dict, model_dict, new_dimension_name, **kwargs):
         keys=model_dict.keys(), names=new_dimension_name,
     )
     flows = pd.concat(
-        [_get_transmission_flows(model, "sum", **kwargs) for model in model_dict.values()],
+        [_get_transmission_flows(model, None, **kwargs) for model in model_dict.values()],
         keys=model_dict.keys(), names=new_dimension_name,
     )
+    flows_sum = agg_flows(flows.to_frame("net_import"), "sum").squeeze()
+    flows_monthly_sum = agg_flows(flows.to_frame("net_import"), "sum", "1M").squeeze()
+
     costs = pd.concat(
         [_get_transmission_costs(model, **kwargs) for model in model_dict.values()],
         keys=model_dict.keys(), names=new_dimension_name,
     )
 
     valid_connections = _concat_from_to(caps.index).drop_duplicates()
-    flows_cleaned = flows.where(_concat_from_to(flows.index).isin(valid_connections)).dropna()
+    flows_sum_cleaned = flows_sum.where(_concat_from_to(flows_sum.index).isin(valid_connections)).dropna()
+    flows_monthly_sum_cleaned = flows_monthly_sum.where(_concat_from_to(flows_monthly_sum.index).isin(valid_connections)).dropna()
     costs_cleaned = costs.where(_concat_from_to(costs.index).isin(valid_connections)).dropna()
 
     data_dict["net_transfer_capacity"] = caps
-    data_dict["net_import"] = flows_cleaned
+    data_dict["net_import"] = flows_sum_cleaned
+    data_dict["net_import_1M"] = flows_monthly_sum_cleaned
     data_dict["total_transmission_costs"] = costs_cleaned
 
 

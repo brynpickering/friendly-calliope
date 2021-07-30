@@ -221,9 +221,12 @@ def get_transmission_data(data_dict, model_dict, new_dimension_name, **kwargs):
     _from = "exporting_region"
     _to = "importing_region"
 
-    def _rename_remote(series, level):
-        df = series.reset_index(level)
-        remote = df.techs.str.split(":", expand=True)[1]
+    def _rename_remote(series_or_df, level):
+        df = series_or_df.reset_index(level)
+        if (df[level].str.find(":") > -1).any():
+            remote = df[level].str.split(":", expand=True)[1]
+        else:
+            remote = df[level]
         df[level] = rename_locations(remote, region_group)
         return df.set_index(level, append=True)
 

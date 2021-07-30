@@ -221,8 +221,11 @@ def get_transmission_data(data_dict, model_dict, new_dimension_name, **kwargs):
     _from = "exporting_region"
     _to = "importing_region"
 
-    def _rename_remote(x):
-        return rename_locations(pd.Series([x]), region_group).item()
+    def _rename_remote(series, level):
+        df = series.reset_index(level)
+        remote = df.techs.str.split(":", expand=True)[1]
+        df[level] = rename_locations(remote, region_group)
+        return df.set_index(level, append=True)
 
     def _rename_tech(x):
         return "ac_transmission" if x.startswith("ac") else "dc_transmission"
@@ -238,8 +241,7 @@ def get_transmission_data(data_dict, model_dict, new_dimension_name, **kwargs):
             remote_loc = _to if flow == "con" else _from
             loc = _from if flow == "con" else _to
             _flow = (
-                _flow
-                .rename(lambda x: _rename_remote(x.split(":")[1]), level="techs")
+                _rename_remote(_flow, level="techs")
                 .rename_axis(index={"techs": remote_loc, "locs": loc})
             )
             _flow_summed_across_all_transmission_techs = _flow.groupby(level=index_names).sum()
@@ -265,8 +267,7 @@ def get_transmission_data(data_dict, model_dict, new_dimension_name, **kwargs):
         df = clean_series(mapped_da, zero_threshold=ZERO_THRESHOLD).unstack("locs")
         df.index = df.index.str.split(":", expand=True).rename(["techs", _from])
         series = (
-            df
-            .rename(_rename_remote, level=_from)
+            _rename_remote(df, level=_from)
             .rename(_rename_tech, level="techs")
             .rename_axis(columns=_to)
             .assign(unit="tw", carrier="electricity")
@@ -282,8 +283,7 @@ def get_transmission_data(data_dict, model_dict, new_dimension_name, **kwargs):
         df = clean_series(mapped_da, zero_threshold=ZERO_THRESHOLD).unstack("locs")
         df.index = df.index.str.split(":", expand=True).rename(["techs", _from])
         series = (
-            df
-            .rename(_rename_remote, level=_from)
+            _rename_remote(df, level=_from)
             .rename(_rename_tech, level="techs")
             .rename_axis(columns=_to)
             .assign(unit=unit)

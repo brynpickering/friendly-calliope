@@ -91,6 +91,7 @@ def combine_scenarios_to_one_dict(
         [get_storage_caps(model, **kwargs) for model in model_dict.values()],
         keys=model_dict.keys(), names=new_dimension_name,
     )
+
     energy_flows = pd.concat(
         [get_flows(model, None, **kwargs) for model in model_dict.values()],
         keys=model_dict.keys(), names=new_dimension_name,
@@ -115,6 +116,8 @@ def combine_scenarios_to_one_dict(
 
     if return_hourly:
         dataframe_to_dict_elements(energy_flows, all_data_dict)
+    else:
+        del all_data_dict["net_import"]
 
     all_data_dict["names"] = names
 
@@ -315,13 +318,15 @@ def get_transmission_data(data_dict, model_dict, new_dimension_name, **kwargs):
     )
 
     valid_connections = _concat_from_to(caps.index).drop_duplicates()
+    flows_cleaned = flows.where(_concat_from_to(flows.index).isin(valid_connections)).dropna()
     flows_sum_cleaned = flows_sum.where(_concat_from_to(flows_sum.index).isin(valid_connections)).dropna()
     flows_monthly_sum_cleaned = flows_monthly_sum.where(_concat_from_to(flows_monthly_sum.index).isin(valid_connections)).dropna()
     costs_cleaned = costs.where(_concat_from_to(costs.index).isin(valid_connections)).dropna()
 
     data_dict["net_transfer_capacity"] = caps
-    data_dict["net_import"] = flows_sum_cleaned
-    data_dict["net_import_1M"] = flows_monthly_sum_cleaned
+    data_dict["net_import"] = flows_cleaned
+    data_dict["net_import_sum"] = flows_sum_cleaned
+    data_dict["net_import_sum_1M"] = flows_monthly_sum_cleaned
     data_dict["total_transmission_costs"] = costs_cleaned
 
 

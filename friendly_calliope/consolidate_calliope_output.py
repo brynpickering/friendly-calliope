@@ -70,6 +70,8 @@ def combine_scenarios_to_one_dict(
     )
     valid_loc_techs = get_valid_loc_techs(energy_caps)
     kwargs["valid_loc_techs"] = valid_loc_techs
+    # We kept demand techs in for the 'valid loc techs'. We remove them here.
+    energy_caps = energy_caps[energy_caps.index.get_level_values("techs").str.find("demand") == -1]
 
     output_costs = pd.concat(
         [get_output_costs(model, **kwargs) for model in model_dict.values()],
@@ -131,7 +133,7 @@ def dataframe_to_dict_elements(df, data_dict):
 
 def get_energy_caps(model, **kwargs):
     """Get energy capacity"""
-    mapped_da = map_da(model._model_data["energy_cap"], keep_demand=False, **kwargs)
+    mapped_da = map_da(model._model_data["energy_cap"], keep_demand=True, **kwargs)
     series = clean_series(mapped_da, zero_threshold=ZERO_THRESHOLD)
     if series is None:
         return None

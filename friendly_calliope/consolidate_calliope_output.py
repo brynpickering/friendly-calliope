@@ -281,6 +281,7 @@ def get_transmission_data(data_dict, model_dict, new_dimension_name, **kwargs):
             .assign(unit="tw", carrier="electricity")
             .set_index(["unit", "carrier"], append=True)
             .stack()
+            .div(10)
         )
         return series.groupby(level=series.index.names).sum()
 

@@ -606,7 +606,7 @@ if __name__ == "__main__":
     parser.add_argument("indir", help="Directory containing all scenario files")
     parser.add_argument("outdir", help="Filepath to dump friendly data")
     parser.add_argument(
-        "--import_group", default=EU28,
+        "--import_group", nargs="+", default=EU28,
         help="list of regions defining a `region of interest` to track imports/exports"
     )
     parser.add_argument(

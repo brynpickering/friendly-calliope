@@ -8,16 +8,19 @@ from friendly_data.converters import from_df
 from friendly_data.dpkg import create_pkg, write_pkg
 
 
-def get_models_from_file(indir):
+def get_models_from_file(indir, baseline_filename=None, use_filename_as_scenario=False):
     input_files = glob.glob(os.path.join(indir, "*.nc"))
     models = {}
     _scenario = 0
     cost_optimal_model = None
     for file in input_files:
-        if os.path.basename(file) == "spore_0.nc":
+        if baseline_filename is not None and os.path.basename(file) == baseline_filename:
             cost_optimal_model = calliope.read_netcdf(file)
         else:
-            models[_scenario] = calliope.read_netcdf(file)
+            if use_filename_as_scenario:
+                models[os.path.basename(file).replace(".nc", "")] = calliope.read_netcdf(file)
+            else:
+                models[_scenario] = calliope.read_netcdf(file)
         _scenario += 1
     return models, cost_optimal_model
 

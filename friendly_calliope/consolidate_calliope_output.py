@@ -4,6 +4,7 @@ import pandas as pd
 import numpy as np
 import xarray as xr
 
+import calliope
 from calliope.core.util.dataset import split_loc_techs
 
 from friendly_calliope.io import get_models_from_file, write_dpkg
@@ -528,7 +529,7 @@ def rename_locations(locations, region_group):
 
 
 def get_cleaned_dim_mapping(
-    da, dim, keep_demand=True, dim_agg="sum", import_group=EU28, import_groupname="eu",
+    da, dim, keep_demand=True, dim_agg="sum",
     region_group="countries", transmission_only=False, **kwargs
 ):
     """
@@ -546,11 +547,6 @@ def get_cleaned_dim_mapping(
     dim_agg : string, default = "sum"
         How to group the unconcatenated and cleaned up data.
         Any xarray groupby method can be passed.
-    import_group : array of strings, default = all countries of the EU28
-        List of regions (post-grouping based on `region_group`) to consider as the
-        'region of interest' for imports/exports across the border
-    import_groupname : string, default = 'eu'
-        Name of the 'region of interest'
     region_group : string or mapping, default = "countries"
         If "countries", group locations to a country level, otherwise group based on
         a mapping from model locations to group names. Mapping allows e.g. one country to
@@ -606,25 +602,73 @@ if __name__ == "__main__":
     parser.add_argument("indir", help="Directory containing all scenario files")
     parser.add_argument("outdir", help="Filepath to dump friendly data")
     parser.add_argument(
-        "--import_group", nargs="+", default=EU28,
-        help="list of regions defining a `region of interest` to track imports/exports"
+        "--baseline_filename", default=None,
+        help="""
+        Filename of file found in indir not to include in the datapackage but
+        from which input data (e.g. tech names, resolution, input costs) will be collated.
+        NOTE: this file won't be included in the output.
+        If not given, input data will be taken from the first available file,
+        whose outputs *will* be included in the output.
+        """
     )
     parser.add_argument(
-        "--import_groupname", default="eu",
-        help="Name for 'region of interest' for grouping imports/exports"
+        "--region_group", type=str, default="countries",
+        help="""
+        Mapping from model regions to output regions.
+        Default is 'countries', i.e. all outputs will be aggregated to national level.
+        Anything user-defined must be in the form of dictionary mapping for any regions that will be aggregated.
+        E.g. "{'GRC_1': 'GRC', 'GRC_2': 'GRC', ..., 'MNE_1': 'rest', 'BIH_1': 'rest', ...}"
+        would aggregate all Greece subregions to the country level and all other regions in the model to the
+        region 'rest'.
+        Any regions not given in the mapping will be kept at their native resolution.
+        That means that an empty dictionary will result in all regions remaining at their native resolution
+        """
     )
+    parser.add_argument(
+        '--include_ts_in_output', action='store_true',
+        help="""
+        If set, high-resolution temporal data (at the native resolution of the model) will be included in the datapackage. These files will likely be large.
+        """
+    )
+
+    parser.add_argument(
+        '--meta_description', type=str,
+        default="Calliope output dataset for SENTINEL intercomparison free model run scenarios"
+    )
+    parser.add_argument(
+        '--meta_name', type=str,
+        default="calliope-sentinel-free-model-runs"
+    )
+    parser.add_argument(
+        '--meta_keywords', nargs="+", type=str,
+        default="calliope sentinel free-model-runs"
+    )
+    parser.add_argument(
+        '--licenses', type=str,
+        default="CC-BY-4.0"
+    )
+
+    parser.set_defaults(include_ts_in_output=False)
     args = parser.parse_args()
 
-    model_dict, cost_optimal_model = get_models_from_file(args.indir)
-    kwargs = {
-        k: getattr(args, k) for k in ["import_group", "import_groupname"]
-        if getattr(args, k) is not None
-    }
-    data_dict = combine_scenarios_to_one_dict(model_dict, cost_optimal_model, **kwargs)
+    model_dict, cost_optimal_model = get_models_from_file(
+        args.indir,
+        baseline_filename=args.baseline_filename,
+        use_filename_as_scenario=True
+    )
+    if args.region_group == "countries":
+        region_group = "countries"
+    else:
+        region_group = calliope.AttrDict.from_yaml_string(args.region_group).as_dict()
+
+    data_dict = combine_scenarios_to_one_dict(
+        model_dict, cost_optimal_model, region_group=region_group
+    )
+
     meta = {
-        "name": "calliope-sentinel-data",
-        "description": "Calliope output dataset",
-        "keywords": ["calliope"],
-        "license": "CC-BY-4.0"
+        "name": args.meta_name,
+        "description": args.meta_description,
+        "keywords": args.meta_keywords,
+        "licenses": args.licenses
     }
-    write_dpkg(data_dict, args.outdir, meta)
+    write_dpkg(data_dict, args.outdir, meta, include_timeseries_data=args.include_ts_in_output)

@@ -305,6 +305,9 @@ def get_transmission_data(data_dict, model_dict, new_dimension_name, **kwargs):
     def _concat_from_to(index):
         return index.get_level_values(_from) + "::" + index.get_level_values(_to)
 
+    def _clean_flows(flow, valid_connections):
+        return flow.where(_concat_from_to(flow.index).isin(valid_connections)).dropna()
+
     caps = pd.concat(
         [_get_transmission_caps(model, **kwargs) for model in model_dict.values()],
         keys=model_dict.keys(), names=new_dimension_name,
@@ -315,6 +318,8 @@ def get_transmission_data(data_dict, model_dict, new_dimension_name, **kwargs):
     )
     flows_sum = agg_flows(flows.to_frame("net_import"), "sum").squeeze()
     flows_monthly_sum = agg_flows(flows.to_frame("net_import"), "sum", "1M").squeeze()
+    flows_max = agg_flows(flows.to_frame("net_import"), "max").squeeze()
+    flows_monthly_max = agg_flows(flows.to_frame("net_import"), "max", "1M").squeeze()
 
     costs = pd.concat(
         [_get_transmission_costs(model, **kwargs) for model in model_dict.values()],
@@ -322,16 +327,14 @@ def get_transmission_data(data_dict, model_dict, new_dimension_name, **kwargs):
     )
 
     valid_connections = _concat_from_to(caps.index).drop_duplicates()
-    flows_cleaned = flows.where(_concat_from_to(flows.index).isin(valid_connections)).dropna()
-    flows_sum_cleaned = flows_sum.where(_concat_from_to(flows_sum.index).isin(valid_connections)).dropna()
-    flows_monthly_sum_cleaned = flows_monthly_sum.where(_concat_from_to(flows_monthly_sum.index).isin(valid_connections)).dropna()
-    costs_cleaned = costs.where(_concat_from_to(costs.index).isin(valid_connections)).dropna()
 
     data_dict["net_transfer_capacity"] = caps
-    data_dict["net_import"] = flows_cleaned
-    data_dict["net_import_sum"] = flows_sum_cleaned
-    data_dict["net_import_sum_1M"] = flows_monthly_sum_cleaned
-    data_dict["total_transmission_costs"] = costs_cleaned
+    data_dict["net_import"] = _clean_flows(flows, valid_connections)
+    data_dict["net_import_sum"] = _clean_flows(flows_sum, valid_connections)
+    data_dict["net_import_sum_1M"] = _clean_flows(flows_monthly_sum, valid_connections)
+    data_dict["net_import_max"] = _clean_flows(flows_max, valid_connections)
+    data_dict["net_import_max_1M"] = _clean_flows(flows_monthly_max, valid_connections)
+    data_dict["total_transmission_costs"] = _clean_flows(costs, valid_connections)
 
 
 def map_da(da, keep_demand=True, timeseries_agg="sum", loc_tech_agg="sum", **kwargs):
@@ -641,7 +644,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         '--meta_keywords', nargs="+", type=str,
-        default="calliope sentinel free-model-runs"
+        default=["calliope", "sentinel", "free-model-runs"]
     )
     parser.add_argument(
         '--licenses', type=str,

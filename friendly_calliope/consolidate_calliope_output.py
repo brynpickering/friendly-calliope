@@ -90,10 +90,6 @@ def combine_scenarios_to_one_dict(
         )
         dataframe_to_dict_elements(output_emissions, all_data_dict)
 
-    storage_caps = pd.concat(
-        [get_storage_caps(model, **kwargs) for model in model_dict.values()],
-        keys=model_dict.keys(), names=new_dimension_name,
-    )
 
     energy_flows = pd.concat(
         [get_flows(model, None, **kwargs) for model in model_dict.values()],
@@ -108,6 +104,21 @@ def combine_scenarios_to_one_dict(
 
     energy_caps = add_units_to_caps(energy_caps, energy_flows_max, cost_optimal_model)
 
+    storage_caps = add_storage_carriers(
+        pd.concat(
+            [get_storage_caps(model, **kwargs) for model in model_dict.values()],
+            keys=model_dict.keys(), names=new_dimension_name,
+        ),
+        energy_flows_max
+    )
+    if return_hourly:
+        storage = add_storage_carriers(
+            pd.concat(
+                [get_storage(model, **kwargs) for model in model_dict.values()],
+                keys=model_dict.keys(), names=new_dimension_name,
+            ),
+        energy_flows
+        )
     names = names.reindex(energy_caps.index.get_level_values("techs").unique()).fillna(NEW_TECH_NAMES)
     assert names.isna().sum() == 0
 
@@ -119,6 +130,7 @@ def combine_scenarios_to_one_dict(
 
     if return_hourly:
         dataframe_to_dict_elements(energy_flows, all_data_dict)
+        dataframe_to_dict_elements(storage, all_data_dict)
     else:
         del all_data_dict["net_import"]
 
@@ -162,6 +174,18 @@ def get_storage_caps(model, **kwargs):
             .set_index("unit", append=True)
             .div(10)
         )
+
+
+def get_storage(model, **kwargs):
+    """Get storage level as a function of time"""
+    mapped_da = map_da(model._model_data["storage"], **kwargs)
+    return (
+        clean_series(mapped_da, **kwargs)
+        .div(10)
+        .to_frame("storage_level")
+        .assign(unit="twh")
+        .set_index("unit", append=True)
+    )
 
 
 def get_valid_loc_techs(df):
@@ -381,6 +405,21 @@ def slice_on_loc_techs(series, loc_techs):
             "::" + series.index.get_level_values("techs")
         ).isin(loc_techs))
         .dropna()
+    )
+
+
+def add_storage_carriers(storage_df, energy_flows):
+    carriers = (
+        energy_flows
+        .reset_index("carriers")
+        .reorder_levels(storage_df.index.names)
+        .reindex(storage_df.index)
+        .carriers
+    )
+    return (
+        storage_df
+        .assign(carriers=carriers)
+        .set_index("carriers", append=True)
     )
 
 

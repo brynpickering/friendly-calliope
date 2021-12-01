@@ -212,11 +212,16 @@ def flow_name(flow_direction, timeseries_agg):
     return f"flow_{direction}_{timeseries_agg}" if timeseries_agg is not None else f"flow_{direction}"
 
 
-def agg_flows(energy_flows_df, timeseries_agg, final_resolution=None):
+def agg_flows(energy_flows_df, timeseries_agg, final_resolution=None, **kwargs):
 
     flows_df = energy_flows_df.rename_axis(columns="flows").stack().unstack("timesteps")
 
-    agg_kwargs = {"min_count": 1} if timeseries_agg == "sum" else {}
+    if timeseries_agg != "sum":
+        if "timestep_resolution" in kwargs.keys():
+            flows_df = flows_df.div(kwargs["timestep_resolution"].to_series())
+        agg_kwargs = {}
+    else:
+        agg_kwargs = {"min_count": 1}
     if final_resolution is not None:
         flow_agg = flows_df.resample(final_resolution, axis=1).apply(timeseries_agg, **agg_kwargs).stack()
         flow_agg = flow_agg.rename(lambda x: f"{x}_{timeseries_agg}_{final_resolution}", level="flows")
@@ -429,78 +434,55 @@ def add_units_to_caps(energy_caps, energy_flows, cost_optimal_model):
     Get units for nameplate capacities and add additional capacities for multi-carrier
     technologies, to give an approximate maximum capacity for non-primary carriers.
     """
-    multicarrier_info = split_loc_techs(
+    multicarrier_primary_info = split_loc_techs(
         cost_optimal_model.inputs.lookup_primary_loc_tech_carriers_out,
         return_as="Series"
     )
-    multicarrier_info = (
-        multicarrier_info
+    multicarrier_primary_info = (
+        multicarrier_primary_info
         .str
         .split("::", expand=True)[2]
         .to_frame("carriers")
     )
-    multicarrier_info = (
-        multicarrier_info
+    multicarrier_primary_info = (
+        multicarrier_primary_info
         .replace({
-            x: x.split("_")[1] if "_" in x else x
-            for x in np.unique(multicarrier_info.values)
+            x: x.split("_")[1] if ("_heat" in x or "_transport" in x) else x
+            for x in np.unique(multicarrier_primary_info.values)
         })
         .groupby(level="techs").first()
         .set_index("carriers", append=True)
     )
-    non_multi_carrier = (
-        energy_flows.drop(
-            multicarrier_info
-            .index
-            .levels[0],
-            level='techs',
-            errors="ignore"
-        )
-        .dropna(subset=["flow_out_max"])
-        .reset_index(["carriers", "unit"])
-    )
-    levels_to_move = [i for i in energy_flows.index.names if i not in multicarrier_info.index.names]
-    multi_carrier = (
-        energy_flows
-        .unstack(levels_to_move)
-        .reindex(multicarrier_info.index)
-        .stack(levels_to_move)
-        .dropna(subset=["flow_out_max"])
+    flows_out_reset_carriers = energy_flows["flow_out_max"].dropna().reset_index("carriers")
+    secondary_carrier = (
+        flows_out_reset_carriers
+        [flows_out_reset_carriers.index.duplicated(keep=False)]
+        .set_index("carriers", append=True)
+        .squeeze()
+        .unstack(["techs", "carriers"])
+        .drop(multicarrier_primary_info.index, errors="ignore", axis=1)
+        .stack(["techs", "carriers"])
         .reorder_levels(energy_flows.index.names)
-        .reset_index(["carriers", "unit"])
-    )
-    all_carrier_info = (
-        pd.concat([non_multi_carrier, multi_carrier])
-        .loc[:, ["carriers", "unit"]]
-    )
-    all_carrier_info.loc[all_carrier_info.unit == "twh", "unit"] = "tw"
-    all_carrier_info.loc[all_carrier_info.unit != "tw", "unit"] = all_carrier_info.loc[all_carrier_info.unit != "tw", "unit"] + "_per_hour"
-
-    energy_caps_with_units = (
-        pd.concat([energy_caps, all_carrier_info.reindex(energy_caps.index)], axis=1, sort=True)
-        .set_index(["carriers", "unit"], append=True)
-    )
-    assert len(energy_caps_with_units) == len(energy_caps)
-
-    secondary_carrier_caps = energy_caps_with_units.nameplate_capacity.align(
-        energy_flows["flow_out_max"].dropna().droplevel("unit")
     )
 
-    energy_caps_with_units_and_secondary = (
-        secondary_carrier_caps[0]
-        .fillna(secondary_carrier_caps[1])
-        .dropna()
-        .rename({np.nan: "tw"}, level="unit")
+    all_primary_carrier = energy_flows["flow_out_max"].dropna().drop(secondary_carrier.index)
+    secondary_carrier = secondary_carrier.rename(lambda x: "tw" if x == "twh" else x + "_per_hour", level="unit")
+    all_primary_carrier = all_primary_carrier.rename(lambda x: "tw" if x == "twh" else x + "_per_hour", level="unit")
+
+    energy_caps_with_primary_units = energy_caps.align(all_primary_carrier,axis=0)[0]
+    assert len(energy_caps_with_primary_units) == len(energy_caps)
+
+    energy_caps_with_all_units = (
+        energy_caps_with_primary_units
+        .append(secondary_carrier.to_frame("nameplate_capacity"))
+        .sort_index()
     )
 
-    assert len(energy_caps_with_units_and_secondary) == len(energy_flows["flow_out_max"].dropna())
+    assert len(energy_caps_with_all_units) == len(energy_flows["flow_out_max"].dropna())
 
-    assert energy_caps_with_units_and_secondary.reindex(energy_caps_with_units.index).equals(energy_caps_with_units.nameplate_capacity)
+    assert energy_caps_with_all_units.reindex(energy_caps_with_primary_units.index).equals(energy_caps_with_primary_units)
 
-    energy_caps_with_units = energy_caps_with_units.reindex(energy_caps_with_units_and_secondary.index)
-    energy_caps_with_units["nameplate_capacity"] = energy_caps_with_units_and_secondary
-
-    return energy_caps_with_units
+    return energy_caps_with_all_units
 
 
 def get_output_costs(

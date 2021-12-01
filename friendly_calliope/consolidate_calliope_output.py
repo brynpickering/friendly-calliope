@@ -415,9 +415,14 @@ def slice_on_loc_techs(series, loc_techs):
 
 
 def add_storage_carriers(storage_df, energy_flows):
-    carriers = (
-        energy_flows
+    _flows = (
+        energy_flows["flow_out_max"]
+        .dropna()
         .reset_index("carriers")
+    )
+    carriers = (
+        _flows
+        .droplevel([i for i in _flows.index.names if i not in storage_df.index.names])
         .reorder_levels(storage_df.index.names)
         .reindex(storage_df.index)
         .carriers

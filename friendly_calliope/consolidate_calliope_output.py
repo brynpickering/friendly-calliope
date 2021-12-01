@@ -110,7 +110,7 @@ def combine_scenarios_to_one_dict(
             [get_storage_caps(model, **kwargs) for model in model_dict.values()],
             keys=model_dict.keys(), names=new_dimension_name,
         ),
-        energy_flows_max
+        energy_flows_max["flow_out_max"]
     )
     if return_hourly:
         storage = add_storage_carriers(
@@ -118,7 +118,7 @@ def combine_scenarios_to_one_dict(
                 [get_storage(model, **kwargs) for model in model_dict.values()],
                 keys=model_dict.keys(), names=new_dimension_name,
             ),
-        energy_flows
+        energy_flows["flow_out"]
         )
     names = names.reindex(energy_caps.index.get_level_values("techs").unique()).fillna(NEW_TECH_NAMES)
     assert names.isna().sum() == 0
@@ -179,7 +179,7 @@ def get_storage_caps(model, **kwargs):
 
 def get_storage(model, **kwargs):
     """Get storage level as a function of time"""
-    mapped_da = map_da(model._model_data["storage"], **kwargs)
+    mapped_da = map_da(model._model_data["storage"], timeseries_agg=None, **kwargs)
     return (
         clean_series(mapped_da, **kwargs)
         .div(10)
@@ -416,7 +416,7 @@ def slice_on_loc_techs(series, loc_techs):
 
 def add_storage_carriers(storage_df, energy_flows):
     _flows = (
-        energy_flows["flow_out_max"]
+        energy_flows
         .dropna()
         .reset_index("carriers")
     )

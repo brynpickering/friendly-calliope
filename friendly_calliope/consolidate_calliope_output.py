@@ -420,9 +420,9 @@ def add_storage_carriers(storage_df, energy_flows):
         .dropna()
         .reset_index("carriers")
     )
+    _flows = _flows[~_flows.index.duplicated()]
     carriers = (
         _flows
-        .droplevel([i for i in _flows.index.names if i not in storage_df.index.names])
         .reorder_levels(storage_df.index.names)
         .reindex(storage_df.index)
         .carriers
@@ -431,6 +431,7 @@ def add_storage_carriers(storage_df, energy_flows):
         storage_df
         .assign(carriers=carriers)
         .set_index("carriers", append=True)
+        .reorder_levels(energy_flows.index.names)
     )
 
 

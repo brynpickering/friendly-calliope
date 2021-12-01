@@ -71,8 +71,9 @@ def combine_scenarios_to_one_dict(
     )
     valid_loc_techs = get_valid_loc_techs(energy_caps)
     kwargs["valid_loc_techs"] = valid_loc_techs
-    # We kept demand techs in for the 'valid loc techs'. We remove them here.
+    # We kept demand and export techs in for the 'valid loc techs'. We remove them here.
     energy_caps = energy_caps[energy_caps.index.get_level_values("techs").str.find("demand") == -1]
+    energy_caps = energy_caps[energy_caps.index.get_level_values("techs").str.find("distribution_export") == -1]
 
     output_costs = pd.concat(
         [get_output_costs(model, **kwargs) for model in model_dict.values()],

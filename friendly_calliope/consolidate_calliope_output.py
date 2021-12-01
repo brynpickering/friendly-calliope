@@ -475,7 +475,7 @@ def add_units_to_caps(energy_caps, energy_flows, cost_optimal_model):
     secondary_carrier = secondary_carrier.rename(lambda x: "tw" if x == "twh" else x + "_per_hour", level="unit")
     all_primary_carrier = all_primary_carrier.rename(lambda x: "tw" if x == "twh" else x + "_per_hour", level="unit")
 
-    energy_caps_with_primary_units = energy_caps.align(all_primary_carrier,axis=0)[0]
+    energy_caps_with_primary_units = energy_caps.align(all_primary_carrier,axis=0)[0].dropna()
     assert len(energy_caps_with_primary_units) == len(energy_caps)
 
     energy_caps_with_all_units = (

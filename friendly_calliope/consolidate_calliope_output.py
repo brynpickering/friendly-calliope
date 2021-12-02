@@ -484,8 +484,6 @@ def add_units_to_caps(energy_caps, energy_flows, cost_optimal_model):
         .sort_index()
     )
 
-    assert len(energy_caps_with_all_units) == len(energy_flows["flow_out_max"].dropna())
-
     assert energy_caps_with_all_units.reindex(energy_caps_with_primary_units.index).equals(energy_caps_with_primary_units)
 
     return energy_caps_with_all_units

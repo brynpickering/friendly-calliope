@@ -9,11 +9,6 @@ from calliope.core.util.dataset import split_loc_techs
 
 from friendly_calliope.io import get_models_from_file, write_dpkg
 
-EU28 = [
-    "AUT", "BEL", "BGR", "HRV", "CYP", "CZE", "DNK", "EST", "FIN", "FRA", "DEU",
-    "GRC", "HUN", "IRL", "ITA", "LVA", "LTU", "LUX", "NLD", "POL", "PRT", "ROU",
-    "SVK", "SVN", "ESP", "SWE", "GBR"
-]
 ZERO_THRESHOLD = 5e-6  # capacities lower than this will be considered as effectively zero
 COST_NAME_MAPPING = {
     'cost_energy_cap': "cost_per_nameplate_capacity",

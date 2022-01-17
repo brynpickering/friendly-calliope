@@ -582,7 +582,9 @@ def get_cleaned_dim_mapping(
         split_dim = split_dim[split_dim[1].str.find(":") > -1]
     else:
         split_dim = split_dim[split_dim[1].str.find(":") == -1]
-    split_dim = split_dim.loc[split_dim[1].str.find("tech_heat") == -1]
+    split_dim = split_dim.loc[
+        (split_dim[1].str.find("tech_heat") == -1) & (split_dim[1].str.find("_converter") == -1)
+    ]
     if keep_demand is False:
         split_dim = split_dim.loc[split_dim[1].str.find("demand") == -1]
 
@@ -596,6 +598,8 @@ def get_cleaned_dim_mapping(
     if "carriers" in dim:
         split_dim.loc[split_dim[2].str.endswith("_heat"), 2] = "heat"
         split_dim.loc[split_dim[2].str.endswith("_transport"), 2] = "transport"
+        for fuel in ["diesel", "kerosene", "methane", "methanol"]:
+            split_dim.loc[split_dim[2] == f"syn_{fuel}", 2] = fuel
         new_dim = ("locs", "techs", "carriers")
     else:
         new_dim = ("locs", "techs")

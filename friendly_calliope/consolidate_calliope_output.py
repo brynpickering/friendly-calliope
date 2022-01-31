@@ -449,7 +449,7 @@ def add_units_to_caps(energy_caps, energy_flows, cost_optimal_model):
     multicarrier_primary_info = (
         multicarrier_primary_info
         .replace({
-            x: x.split("_")[1] if ("_heat" in x or "_transport" in x) else x
+            x: x.split("_")[1] if ("_heat" in x or "_transport" in x or "syn_" in x) else x
             for x in np.unique(multicarrier_primary_info.values)
         })
         .groupby(level="techs").first()

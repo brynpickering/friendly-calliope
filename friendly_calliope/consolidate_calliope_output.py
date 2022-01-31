@@ -265,9 +265,8 @@ def get_transmission_data(data_dict, model_dict, new_dimension_name, **kwargs):
         return "ac_transmission" if x.startswith("ac") else "dc_transmission"
 
     def _get_transmission_flows(model, timeseries_agg, **kwargs):
-        flows = get_flows(
-            model, timeseries_agg, transmission_only=True, zero_threshold=ZERO_THRESHOLD, **kwargs
-        )
+        flows = get_flows(model, timeseries_agg, transmission_only=True, **kwargs)
+
         index_names = flows.rename_axis(index={"techs": _from, "locs": _to}).index.names
         summed_flows = []
         for flow in ["prod", "con"]:
@@ -294,6 +293,8 @@ def get_transmission_data(data_dict, model_dict, new_dimension_name, **kwargs):
         )
 
         net_import = import_export["import"] - import_export["export"]
+        net_import[net_import.abs() < ZERO_THRESHOLD] = 0
+
         return net_import
 
     def _get_transmission_caps(model, **kwargs):

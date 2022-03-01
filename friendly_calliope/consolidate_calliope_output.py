@@ -411,11 +411,7 @@ def slice_on_loc_techs(series, loc_techs):
 
 
 def add_storage_carriers(storage_df, energy_flows):
-    _flows = (
-        energy_flows
-        .dropna()
-        .reset_index("carriers")
-    )
+    _flows = energy_flows.reset_index("carriers")
     _flows = _flows[~_flows.index.duplicated()]
     carriers = (
         _flows

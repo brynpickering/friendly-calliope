@@ -8,7 +8,7 @@ requirements = Path("requirements.txt").read_text().strip().split("\n")
 
 setup(
     name='friendly-calliope',
-    version='0.2.0',
+    version='0.3.0',
     description='Toolkit to prepare Calliope output data for dumping to friendly-data.',
     maintainer='Bryn Pickering',
     maintainer_email='bryn.pickering@usys.ethz.ch',

@@ -57,7 +57,8 @@ def combine_scenarios_to_one_dict(
         new_dimension_name = [new_dimension_name]
 
     names = cost_optimal_model.inputs.names.to_series()
-    kwargs["timestep_resolution"] = cost_optimal_model.inputs.timestep_resolution
+    kwargs["timestep_resolution"] = cost_optimal_model.inputs.timestep_resolution.mean().item()
+    assert cost_optimal_model.inputs.timestep_resolution.std().item() == 0, "Can only work with a consistent timestep resolution"
 
     all_data_dict.update(get_input_costs(cost_optimal_model.inputs, **kwargs))
     energy_caps = pd.concat(
@@ -213,7 +214,7 @@ def agg_flows(energy_flows_df, timeseries_agg, final_resolution=None, **kwargs):
 
     if timeseries_agg != "sum":
         if "timestep_resolution" in kwargs.keys():
-            flows_df = flows_df.div(kwargs["timestep_resolution"].to_series())
+            flows_df = flows_df.div(kwargs["timestep_resolution"])
         agg_kwargs = {}
     else:
         agg_kwargs = {"min_count": 1}

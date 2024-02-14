@@ -10,8 +10,9 @@ setup(
     name='friendly-calliope',
     version='0.3.0',
     description='Toolkit to prepare Calliope output data for dumping to friendly-data.',
-    maintainer='Bryn Pickering',
-    maintainer_email='bryn.pickering@usys.ethz.ch',
+    maintainers=[
+        {'name': 'Bryn Pickering', 'email': '17178478+brynpickering@users.noreply.github.com'}
+    ]
     packages=find_packages(exclude=['tests*']),
     include_package_data=True,
     install_requires=requirements,

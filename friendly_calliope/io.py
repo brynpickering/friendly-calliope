@@ -3,7 +3,6 @@ import os
 from copy import deepcopy
 
 import calliope
-
 from friendly_data.converters import from_df
 from friendly_data.dpkg import create_pkg, write_pkg
 
@@ -14,11 +13,16 @@ def get_models_from_file(indir, baseline_filename=None, use_filename_as_scenario
     _scenario = 0
     cost_optimal_model = None
     for file in input_files:
-        if baseline_filename is not None and os.path.basename(file) == baseline_filename:
+        if (
+            baseline_filename is not None
+            and os.path.basename(file) == baseline_filename
+        ):
             cost_optimal_model = calliope.read_netcdf(file)
         else:
             if use_filename_as_scenario:
-                models[os.path.basename(file).replace(".nc", "")] = calliope.read_netcdf(file)
+                models[os.path.basename(file).replace(".nc", "")] = (
+                    calliope.read_netcdf(file)
+                )
             else:
                 models[_scenario] = calliope.read_netcdf(file)
         _scenario += 1
@@ -26,9 +30,12 @@ def get_models_from_file(indir, baseline_filename=None, use_filename_as_scenario
 
 
 def write_dpkg(
-    data_dict, outdir, meta,
-    name_mapping=None, iamc_mapping=None,
-    include_timeseries_data=False
+    data_dict,
+    outdir,
+    meta,
+    name_mapping=None,
+    iamc_mapping=None,
+    include_timeseries_data=False,
 ):
     """
     Emulates possible friendly_data functionality by saving our dicts of pandas Series
@@ -53,7 +60,7 @@ def write_dpkg(
             "alias": deepcopy(alias),
             "idxcols": resource["schema"]["primaryKey"],
             "name": name_mapping[name] if name_mapping is not None else name,
-            "iamc": "Foo|Bar|{technology}"
+            "iamc": "Foo|Bar|{technology}",
         }
         if iamc_mapping is not None:
             index_meta["iamc"] = iamc_mapping.format(name_mapping[name])

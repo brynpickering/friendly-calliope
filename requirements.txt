@@ -1,3 +1,2 @@
-xarray==0.20
-friendly_data @ git+https://github.com/sentinel-energy/friendly_data.git@0d93750ca7e0ce33840f248255bd55c1e2668dcc
-calliope==0.6.8
+friendly_data @ git+https://github.com/sentinel-energy/friendly_data.git@efe7431a48f60c6a66d129e12bf83d6f907fdff6
+calliope>=0.6.8
